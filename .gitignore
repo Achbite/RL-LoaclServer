@@ -1,1 +1,52 @@
 参考文档
+
+# 临时检查文件
+_check_output.txt
+
+# 模型文件（体积大，不纳入版本控制）
+models/*.onnx
+models/*.pt
+models/*.pth
+
+# 日志
+logs/*.log
+logs/*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# C++ 构建产物
+build/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+*.out
+*.a
+*.lib
+*.so
+*.dll
+
+# Protobuf 生成文件
+*_pb2.py
+*_pb2_grpc.py
+*.pb.cc
+*.pb.h
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+.codebuddy
