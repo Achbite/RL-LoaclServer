@@ -5,6 +5,7 @@
 # 服务名：
 #   client       进入 Client 容器（交互式 bash）
 #   aiserver     启动 AIServer 后台服务 + 进入容器
+#   learner      启动 Learner 后台服务 + 进入容器
 # 选项：
 #   (无参数)     检测镜像 → 按需构建 → 启动/进入容器
 #   --build      强制重新构建镜像
@@ -34,11 +35,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 declare -A SERVICE_MAP=(
     ["client"]="maze-client"
     ["aiserver"]="maze-aiserver"
+    ["learner"]="maze-learner"
 )
 
 declare -A DOCKERFILE_MAP=(
     ["client"]="docker/Dockerfile.client"
     ["aiserver"]="docker/Dockerfile.aiserver"
+    ["learner"]="docker/Dockerfile.learner"
 )
 
 # --- 使用说明 ---
@@ -48,6 +51,7 @@ usage() {
     echo "服务名:"
     echo "  client       进入 Client 容器（交互式 bash）"
     echo "  aiserver     启动 AIServer 后台服务 + 进入容器"
+    echo "  learner      启动 Learner 后台服务 + 进入容器"
     echo ""
     echo "选项:"
     echo "  (无)         检测镜像 → 按需构建 → 启动/进入容器"
@@ -289,5 +293,20 @@ case "$TARGET" in
         info "可视化服务: http://localhost:9004（run.sh 启动后自动挂载后台）"
         echo ""
         docker compose run --rm --service-ports maze-client bash
+        ;;
+    learner)
+        # Learner：后台启动服务 + 进入交互式 bash
+        info "--- 启动 Learner 后台服务 ---"
+        docker compose up -d maze-learner
+        echo ""
+        ok "Learner 已后台启动（容器名: maze-learner）"
+        echo ""
+        info "--- 进入 Learner 容器交互式 bash ---"
+        info "退出容器: 输入 exit 或按 Ctrl+D（服务仍在后台运行）"
+        info "停止服务: docker compose stop maze-learner"
+        echo ""
+        info "运行项目: ./run.sh"
+        echo ""
+        docker compose exec maze-learner bash
         ;;
 esac

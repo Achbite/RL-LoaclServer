@@ -1,0 +1,40 @@
+# ============================================================================
+# RL-Learner 配置文件 - 迷宫训练框架
+# 说明：Learner 训练服务的运行参数集中管理
+#       修改后重启 Learner 即可生效
+# ============================================================================
+
+# --- gRPC 服务参数 ---
+server:
+  listen_port: 9003               # gRPC 监听端口，AIServer 通过此端口发送样本
+  max_workers: 4                  # gRPC 线程池大小
+
+# --- 样本缓存参数 ---
+buffer:
+  max_size: 4096                  # 样本缓存最大容量（超出后丢弃最旧样本）
+  consume_batch_size: 256         # 每次训练消费的样本数量
+
+# --- 训练参数（Phase 3B 启用，当前仅占位）---
+training:
+  learning_rate: 0.0003           # Adam 学习率
+  gamma: 0.99                     # 折扣因子
+  gae_lambda: 0.95                # GAE lambda
+  clip_epsilon: 0.2               # PPO 裁剪系数
+  entropy_coef: 0.01              # 熵正则化系数
+  value_coef: 0.5                 # 价值损失系数
+  max_grad_norm: 0.5              # 梯度裁剪
+  n_epochs: 4                     # 每批数据训练轮数
+
+# --- 模型导出参数 ---
+model:
+  export_dir: "models"            # 模型导出目录（相对于 RL-Learner 根目录）
+  export_interval: 10             # 每训练 N 批次导出一次 ONNX 模型
+  obs_dim: 20                     # 观测向量维度
+  action_dim: 9                   # 动作空间维度
+  hidden_dim: 64                  # 隐藏层维度
+
+# --- 日志参数 ---
+log:
+  console_level: "INFO"           # 控制台日志级别（DEBUG / INFO / WARN / ERROR）
+  file_level: "DEBUG"             # 文件日志级别
+  log_dir: "logs"                 # 日志文件目录（相对于 RL-Learner 根目录）

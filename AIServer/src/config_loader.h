@@ -4,8 +4,9 @@
 
 // ---- 服务参数 ----
 struct ServerConfig {
-int listen_port = 9002;             // gRPC 监听端口
+    int listen_port = 9002;             // gRPC 监听端口
     int max_agents  = 10;               // 最大 Agent 数量
+    int run_mode    = 3;                // 运行模式：1=训练, 2=推理, 3=A*测试
 };
 
 // ---- 策略参数 ----
@@ -15,17 +16,26 @@ struct StrategyConfig {
     int         replan_interval = 10;   // 重新规划间隔（帧）
 };
 
+// ---- 模型参数 ----
+struct ModelConfig {
+    std::string local_dir     = "models/local";   // 本地模型目录（推理优先）
+    std::string p2p_dir       = "models/p2p";     // P2P 模型目录（Learner 共享卷）
+    int         poll_interval = 10;               // 模型轮询间隔（秒）
+};
+
 // ---- Learner 连接参数 ----
 struct LearnerConfig {
-    std::string host          = "127.0.0.1";    // Learner 地址
-int         port          = 9003;            // Learner 端口
-    int         send_interval = 32;              // 样本发送间隔（帧）
+    std::string host              = "127.0.0.1";    // Learner 地址
+    int         port              = 9003;            // Learner 端口
+    int         send_interval     = 32;              // 样本发送间隔（帧）
+    int         sample_batch_size = 128;             // 样本批量发送大小
 };
 
 // ---- AIServer 完整配置 ----
 struct AIServerConfig {
     ServerConfig   server;
     StrategyConfig strategy;
+    ModelConfig    model;
     LearnerConfig  learner;
 };
 

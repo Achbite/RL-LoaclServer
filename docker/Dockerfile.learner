@@ -1,0 +1,25 @@
+# ============================================================================
+# RL-Learner - 强化学习训练器 Docker 构建文件
+# 基础镜像：Python 3.11-slim（轻量 Python 运行环境）
+# 用法：docker compose up maze-learner（推荐）
+# ============================================================================
+
+FROM python:3.11-slim
+
+# --- 避免交互式安装提示 ---
+ENV DEBIAN_FRONTEND=noninteractive
+
+# --- 安装系统依赖（protoc 编译器 + 构建工具）---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- 安装 Python 依赖 ---
+COPY RL-Learner/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# --- 工作目录（进入容器即在 RL-Learner 目录）---
+WORKDIR /workspace/RL-Learner
+
+# --- 默认入口：运行 Learner ---
+CMD ["bash", "./run.sh"]

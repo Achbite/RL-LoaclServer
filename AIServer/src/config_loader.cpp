@@ -115,8 +115,9 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
     std::vector<YamlEntry> entries = ParseYaml(content);
 
     // --- server ---
-out_config.server.listen_port = SafeInt(FindValue(entries, "server", "listen_port"), 9002);
+    out_config.server.listen_port = SafeInt(FindValue(entries, "server", "listen_port"), 9002);
     out_config.server.max_agents  = SafeInt(FindValue(entries, "server", "max_agents"),  10);
+    out_config.server.run_mode    = SafeInt(FindValue(entries, "server", "run_mode"),    3);
 
     // --- strategy ---
     std::string mode = FindValue(entries, "strategy", "mode");
@@ -126,24 +127,47 @@ out_config.server.listen_port = SafeInt(FindValue(entries, "server", "listen_por
     out_config.strategy.grid_size        = SafeInt(FindValue(entries, "strategy", "grid_size"),        500);
     out_config.strategy.replan_interval  = SafeInt(FindValue(entries, "strategy", "replan_interval"),  10);
 
+    // --- model ---
+    std::string local_dir = FindValue(entries, "model", "local_dir");
+    if (!local_dir.empty()) {
+        out_config.model.local_dir = local_dir;
+    }
+    std::string p2p_dir = FindValue(entries, "model", "p2p_dir");
+    if (!p2p_dir.empty()) {
+        out_config.model.p2p_dir = p2p_dir;
+    }
+    out_config.model.poll_interval = SafeInt(FindValue(entries, "model", "poll_interval"), 10);
+
     // --- learner ---
     std::string lhost = FindValue(entries, "learner", "host");
     if (!lhost.empty()) {
         out_config.learner.host = lhost;
     }
-out_config.learner.port          = SafeInt(FindValue(entries, "learner", "port"),          9003);
-    out_config.learner.send_interval = SafeInt(FindValue(entries, "learner", "send_interval"), 32);
+    out_config.learner.port              = SafeInt(FindValue(entries, "learner", "port"),              9003);
+    out_config.learner.send_interval     = SafeInt(FindValue(entries, "learner", "send_interval"),     32);
+    out_config.learner.sample_batch_size = SafeInt(FindValue(entries, "learner", "sample_batch_size"), 128);
 
-    LOG_INFO("Config", "server: port=%d, max_agents=%d",
-             out_config.server.listen_port, out_config.server.max_agents);
+    // --- 运行模式名称映射 ---
+    const char* mode_names[] = {"未知", "训练", "推理", "A*测试"};
+    int mode_idx = out_config.server.run_mode;
+    const char* mode_name = (mode_idx >= 1 && mode_idx <= 3) ? mode_names[mode_idx] : mode_names[0];
+
+    LOG_INFO("Config", "server: port=%d, max_agents=%d, run_mode=%d(%s)",
+             out_config.server.listen_port, out_config.server.max_agents,
+             out_config.server.run_mode, mode_name);
     LOG_INFO("Config", "strategy: mode=%s, grid=%d, replan=%d",
              out_config.strategy.mode.c_str(),
              out_config.strategy.grid_size,
              out_config.strategy.replan_interval);
-    LOG_INFO("Config", "learner: %s:%d, interval=%d",
+    LOG_INFO("Config", "model: local=%s, p2p=%s, poll=%ds",
+             out_config.model.local_dir.c_str(),
+             out_config.model.p2p_dir.c_str(),
+             out_config.model.poll_interval);
+    LOG_INFO("Config", "learner: %s:%d, interval=%d, batch_size=%d",
              out_config.learner.host.c_str(),
              out_config.learner.port,
-             out_config.learner.send_interval);
+             out_config.learner.send_interval,
+             out_config.learner.sample_batch_size);
 
     return true;
 }
