@@ -2,7 +2,7 @@
 #include "maze_env.h"
 #include "maze.pb.h"
 #include "config_loader.h"
-#include "viz_server.h"
+#include "viz_recorder.h"
 #include "logger.h"
 
 #include <cmath>
@@ -78,23 +78,24 @@ int main(int argc, char* argv[]) {
     ClientConfig cfg;
     LoadClientConfig(config_path, cfg);
 
+    // ---- 0a. 初始化日志系统 ----
+    Logger::Instance().Init("log");
+    Logger::Instance().SetConsoleLevel(LogLevel::INFO);
+    Logger::Instance().SetFileLevel(LogLevel::DEBUG);
+
     // ---- 1. 初始化环境 ----
     MazeEnv env;
     env.Init(cfg);
 
-    // ---- 2. 启动可视化服务 ----
-    VizServer viz;
-    if (cfg.viz.enabled) {
-        if (!viz.Start(cfg.viz.port)) {
-            LOG_WARN("Main", "可视化服务启动失败，继续运行（无可视化）");
-        }
-    }
+    // ---- 2. 初始化帧数据记录器 ----
+    VizRecorder viz_recorder;
 
     // ---- 3. 建立 gRPC 连接 ----
     GrpcClient client;
     if (!client.Connect(cfg.network.server_host, cfg.network.server_port)) {
         LOG_ERROR("Main", "无法连接 AIServer %s:%d，退出",
                   cfg.network.server_host.c_str(), cfg.network.server_port);
+        Logger::Instance().Close();
         return 1;
     }
 
@@ -118,12 +119,14 @@ int main(int argc, char* argv[]) {
         maze::InitRsp rsp;
         if (!client.Init(req, rsp)) {
             LOG_ERROR("Main", "Init RPC 失败");
+            Logger::Instance().Close();
             return 1;
         }
         LOG_INFO("Main", "初始化成功: ret_code=%d", rsp.ret_code());
 
         if (rsp.ret_code() != 0) {
             LOG_ERROR("Main", "初始化失败，退出");
+            Logger::Instance().Close();
             return 1;
         }
     }
@@ -132,6 +135,11 @@ int main(int argc, char* argv[]) {
     for (int ep = 0; ep < cfg.run.max_episodes; ++ep) {
         env.Reset();
         LOG_INFO("Main", "===== Episode %d 开始 =====", ep);
+
+        // 开始帧数据记录
+        if (cfg.viz.enabled) {
+            viz_recorder.Begin(cfg.viz.output_dir, ep);
+        }
 
         // 每帧记录各 Agent 的动作（用于可视化）
         std::vector<int> last_actions(cfg.run.agent_num, 0);
@@ -156,6 +164,8 @@ int main(int argc, char* argv[]) {
             maze::UpdateRsp update_rsp;
             if (!client.Update(update_req, update_rsp)) {
                 LOG_ERROR("Main", "Update RPC 失败，退出");
+                viz_recorder.End();
+                Logger::Instance().Close();
                 return 1;
             }
 
@@ -164,7 +174,23 @@ int main(int argc, char* argv[]) {
                 const auto& action = update_rsp.actions(i);
                 int aid = action.agent_id();
                 int act = action.action_id();
+
+                // 记录执行前位置
+                const AgentInfo& before = env.GetAgent(aid);
+                int prev_gx = before.grid_x;
+                int prev_gy = before.grid_y;
+
                 env.Step(aid, act);
+
+                // 记录执行后位置
+                const AgentInfo& after = env.GetAgent(aid);
+                const char* act_name = (act >= 0 && act < 9) ? kActionNames[act] : "未知";
+
+                // 帧级详细日志（仅写文件）
+                LOG_FILE("Frame", "EP:%d F:%d A:%d | 指令:%d(%s) | (%d,%d)->(%d,%d) %s",
+                         ep, env.GetFrameId(), aid, act, act_name,
+                         prev_gx, prev_gy, after.grid_x, after.grid_y,
+                         (prev_gx == after.grid_x && prev_gy == after.grid_y) ? "[未移动]" : "[已移动]");
 
                 // 记录动作用于可视化
                 if (aid >= 0 && aid < static_cast<int>(last_actions.size())) {
@@ -175,11 +201,11 @@ int main(int argc, char* argv[]) {
             // ---- 5d. 帧号递增 ----
             env.AdvanceFrame();
 
-            // ---- 5e. 推送可视化数据 ----
-            if (cfg.viz.enabled && viz.GetClientCount() > 0) {
+            // ---- 5e. 记录帧数据（切片记录，用于离线回放）----
+            if (cfg.viz.enabled) {
                 if (env.GetFrameId() % cfg.viz.interval == 0) {
                     std::string json = BuildVizJson(env, cfg, env.GetFrameId(), ep, last_actions);
-                    viz.Broadcast(json);
+                    viz_recorder.RecordFrame(json);
                 }
             }
 
@@ -196,6 +222,9 @@ int main(int argc, char* argv[]) {
 
         // ---- 6. Episode 结束 ----
         {
+            // 结束帧数据记录
+            viz_recorder.End();
+
             // 统计结果
             const AgentInfo& a = env.GetAgent(0);
             bool passed = (a.grid_x == env.ToGridX(cfg.env.end_x) &&
@@ -219,8 +248,8 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- 7. 结束 ----
-    viz.Stop();
     LOG_INFO("Main", "训练结束");
+    Logger::Instance().Close();
 
     return 0;
 }

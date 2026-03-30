@@ -154,8 +154,12 @@ out_config.network.server_port = SafeInt(FindValue(entries, "network", "server_p
     if (viz_enabled == "false" || viz_enabled == "0") {
         out_config.viz.enabled = false;
     }
-out_config.viz.port     = SafeInt(FindValue(entries, "viz", "port"),     9004);
-    out_config.viz.interval = SafeInt(FindValue(entries, "viz", "interval"), 1);
+    std::string viz_output_dir = FindValue(entries, "viz", "output_dir");
+    if (!viz_output_dir.empty()) {
+        out_config.viz.output_dir = viz_output_dir;
+    }
+    out_config.viz.interval    = SafeInt(FindValue(entries, "viz", "interval"), 1);
+    out_config.viz.server_port = SafeInt(FindValue(entries, "viz", "server_port"), 9004);
 
     LOG_INFO("Config", "run: agent_num=%d, max_episodes=%d, log_interval=%d",
              out_config.run.agent_num, out_config.run.max_episodes, out_config.run.log_interval);
@@ -165,9 +169,10 @@ out_config.viz.port     = SafeInt(FindValue(entries, "viz", "port"),     9004);
              out_config.env.end_x, out_config.env.end_y);
     LOG_INFO("Config", "network: %s:%d",
              out_config.network.server_host.c_str(), out_config.network.server_port);
-    LOG_INFO("Config", "viz: enabled=%s, port=%d, interval=%d",
+    LOG_INFO("Config", "viz: enabled=%s, output_dir=%s, interval=%d, server_port=%d",
              out_config.viz.enabled ? "true" : "false",
-             out_config.viz.port, out_config.viz.interval);
+             out_config.viz.output_dir.c_str(), out_config.viz.interval,
+             out_config.viz.server_port);
 
     return true;
 }

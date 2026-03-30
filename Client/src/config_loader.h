@@ -28,11 +28,12 @@ struct NetworkConfig {
 int         server_port = 9002;          // AIServer gRPC 端口
 };
 
-// ---- 可视化参数 ----
+// ---- 可视化参数（帧数据记录 + HTTP 回放服务）----
 struct VizConfig {
-    bool enabled   = true;                   // 是否启用可视化 WebSocket 服务
-int  port      = 9004;                   // WebSocket 监听端口
-    int  interval  = 1;                      // 推送间隔（帧），每隔多少帧推送一次
+    bool        enabled     = true;              // 是否启用帧数据记录
+    std::string output_dir  = "log/viz";         // 记录文件输出目录
+    int         interval    = 1;                 // 记录间隔（帧），每隔多少帧记录一次
+    int         server_port = 9004;              // 可视化 HTTP 服务端口，浏览器通过此端口访问回放
 };
 
 // ---- 客户端完整配置 ----

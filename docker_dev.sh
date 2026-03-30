@@ -280,13 +280,14 @@ case "$TARGET" in
         docker compose exec maze-aiserver bash
         ;;
     client)
-        # Client：交互式 bash（临时容器）
+        # Client：交互式 bash（临时容器，--service-ports 映射 docker-compose.yml 中定义的端口）
         info "--- 进入 Client 容器交互式 bash ---"
         info "退出容器: 输入 exit 或按 Ctrl+D"
         echo ""
         info "编译项目: ./build.sh"
         info "运行项目: ./run.sh"
+        info "可视化服务: http://localhost:9004（run.sh 启动后自动挂载后台）"
         echo ""
-        docker compose run --rm maze-client bash
+        docker compose run --rm --service-ports maze-client bash
         ;;
 esac

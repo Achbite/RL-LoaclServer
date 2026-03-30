@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>迷宫训练框架 - 实时可视化</title>
+<title>迷宫训练框架 - 可视化回放</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -30,26 +30,19 @@ body {
     font-weight: 600;
 }
 .header h1 span { color: #ff9800; }
-.header-controls {
+.header-right {
     display: flex;
     align-items: center;
-    gap: 16px;
-}
-.status-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: #90a4ae;
+    gap: 12px;
 }
 .status-dot {
-    width: 8px; height: 8px;
+    width: 10px; height: 10px;
     border-radius: 50%;
     display: inline-block;
 }
-.status-dot.green { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
-.status-dot.red { background: #f44336; box-shadow: 0 0 6px #f44336; }
-.status-dot.yellow { background: #ff9800; box-shadow: 0 0 6px #ff9800; }
+.status-dot.connected { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-dot.disconnected { background: #f44336; box-shadow: 0 0 6px #f44336; }
+.status-text { font-size: 13px; color: #78909c; }
 
 /* Main layout */
 .main {
@@ -76,7 +69,7 @@ canvas {
 
 /* Info panel */
 .info-panel {
-    width: 280px;
+    width: 300px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -94,6 +87,9 @@ canvas {
     font-size: 14px;
     font-weight: 600;
     color: #b0bec5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 .card-body { padding: 12px 16px; }
 
@@ -107,7 +103,6 @@ canvas {
 .info-label { color: #607d8b; }
 .info-value { color: #eceff1; font-weight: 500; }
 .info-value.success { color: #4caf50; }
-.info-value.warning { color: #ff9800; }
 
 /* Agent list */
 .agent-item {
@@ -131,20 +126,53 @@ canvas {
 .agent-status.done { color: #4caf50; }
 .agent-status.active { color: #4fc3f7; }
 
-/* Connection input */
-.connect-section {
+/* File selector */
+.file-selector {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    align-items: center;
 }
-.connect-section input {
+.file-selector select {
+    width: 100%;
     background: #0f1923;
     border: 1px solid #2a3a4a;
     color: #e0e0e0;
-    padding: 6px 10px;
-    border-radius: 4px;
+    padding: 8px 10px;
+    border-radius: 6px;
     font-size: 13px;
-    flex: 1;
+    cursor: pointer;
+}
+.file-selector select:focus {
+    border-color: #4fc3f7;
+    outline: none;
+}
+.file-meta {
+    font-size: 12px;
+    color: #607d8b;
+    padding: 2px 0;
+}
+.file-meta .growing {
+    color: #ff9800;
+    font-weight: 500;
+}
+.btn-refresh {
+    padding: 4px 10px;
+    background: #1a237e;
+    color: #9fa8da;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-refresh:hover { filter: brightness(1.3); }
+
+/* Playback controls */
+.playback-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 .btn {
     padding: 6px 14px;
@@ -154,10 +182,52 @@ canvas {
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
+    min-width: 36px;
+    text-align: center;
 }
 .btn:hover { filter: brightness(1.15); }
-.btn-connect { background: #1b5e20; color: #a5d6a7; }
-.btn-disconnect { background: #b71c1c; color: #ef9a9a; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-play { background: #1b5e20; color: #a5d6a7; }
+.btn-step { background: #1a237e; color: #9fa8da; }
+.btn-reset { background: #4e342e; color: #bcaaa4; }
+
+/* Slider */
+.slider-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+.slider-section input[type="range"] {
+    flex: 1;
+    accent-color: #4fc3f7;
+}
+.slider-label {
+    font-size: 12px;
+    color: #78909c;
+    min-width: 80px;
+    text-align: right;
+}
+
+/* Speed control */
+.speed-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+.speed-section label {
+    font-size: 12px;
+    color: #78909c;
+}
+.speed-section select {
+    background: #0f1923;
+    border: 1px solid #2a3a4a;
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
 
 /* Legend */
 .legend {
@@ -176,34 +246,79 @@ canvas {
     width: 14px; height: 14px;
     border-radius: 2px;
 }
+
+/* Loading overlay */
+.loading-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15, 25, 35, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    color: #4fc3f7;
+    z-index: 10;
+}
+.loading-overlay.hidden { display: none; }
 </style>
 </head>
 <body>
 
 <div class="header">
-    <h1>🏗️ 迷宫训练框架 — <span>实时可视化</span></h1>
-    <div class="header-controls">
-        <div class="status-indicator">
-            <span class="status-dot red" id="statusDot"></span>
-            <span id="statusText">未连接</span>
-        </div>
-        <span style="font-size:12px;color:#607d8b;" id="fpsText">FPS: --</span>
+    <h1>🏗️ 迷宫训练框架 — <span>可视化回放</span></h1>
+    <div class="header-right">
+        <span class="status-dot disconnected" id="statusDot"></span>
+        <span class="status-text" id="statusText">未连接</span>
     </div>
 </div>
 
 <div class="main">
     <div class="canvas-container">
         <canvas id="mazeCanvas"></canvas>
+        <div class="loading-overlay hidden" id="loadingOverlay">加载中...</div>
     </div>
 
     <div class="info-panel">
-        <!-- 连接控制 -->
+        <!-- 文件选择 -->
         <div class="card">
-            <div class="card-header">🔌 连接</div>
+            <div class="card-header">
+                📂 选择回放文件
+                <button class="btn-refresh" onclick="refreshFileList()">🔄 刷新</button>
+            </div>
             <div class="card-body">
-                <div class="connect-section">
-                    <input type="text" id="wsUrl" value="ws://127.0.0.1:9004" placeholder="WebSocket 地址">
-                    <button class="btn btn-connect" id="connectBtn" onclick="toggleConnect()">连接</button>
+                <div class="file-selector">
+                    <select id="fileSelect" onchange="onFileSelected()">
+                        <option value="">-- 请选择回放文件 --</option>
+                    </select>
+                    <div class="file-meta" id="fileMeta"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 播放控制 -->
+        <div class="card">
+            <div class="card-header">▶️ 播放控制</div>
+            <div class="card-body">
+                <div class="playback-controls">
+                    <button class="btn btn-step" id="btnPrev" onclick="stepPrev()" disabled title="上一帧">◀</button>
+                    <button class="btn btn-play" id="btnPlay" onclick="togglePlay()" disabled>▶ 播放</button>
+                    <button class="btn btn-step" id="btnNext" onclick="stepNext()" disabled title="下一帧">▶</button>
+                    <button class="btn btn-reset" id="btnReset" onclick="resetPlay()" disabled>⏮ 重置</button>
+                </div>
+                <div class="slider-section">
+                    <input type="range" id="frameSlider" min="0" max="0" value="0" oninput="seekFrame(this.value)" disabled>
+                    <span class="slider-label" id="frameLabel">0 / 0</span>
+                </div>
+                <div class="speed-section">
+                    <label>播放速度:</label>
+                    <select id="speedSelect" onchange="changeSpeed()">
+                        <option value="500">0.5x</option>
+                        <option value="200">1x</option>
+                        <option value="100" selected>2x</option>
+                        <option value="50">5x</option>
+                        <option value="20">10x</option>
+                        <option value="5">50x</option>
+                    </select>
                 </div>
             </div>
         </div>
@@ -225,7 +340,7 @@ canvas {
                     <span class="info-value" id="mapSize">--</span>
                 </div>
                 <div class="info-row">
-                    <span class="info-label">接收帧数</span>
+                    <span class="info-label">总帧数</span>
                     <span class="info-value" id="totalFrames">0</span>
                 </div>
             </div>
@@ -235,7 +350,7 @@ canvas {
         <div class="card">
             <div class="card-header">🤖 Agent 列表</div>
             <div class="card-body" id="agentList">
-                <div style="color:#607d8b;font-size:13px;">等待数据...</div>
+                <div style="color:#607d8b;font-size:13px;">等待选择回放文件...</div>
             </div>
         </div>
 
@@ -270,12 +385,14 @@ canvas {
 // ============================================================================
 // 全局状态
 // ============================================================================
-let ws = null;
-let frameData = null;
-let totalFrames = 0;
-let lastFrameTime = 0;
-let fpsCounter = 0;
-let lastFpsUpdate = 0;
+let frames = [];           // 所有帧数据
+let currentIndex = 0;      // 当前帧索引
+let isPlaying = false;     // 是否正在播放
+let playTimer = null;      // 播放定时器
+let playInterval = 100;    // 播放间隔（ms）
+let isConnected = false;   // 服务器连接状态
+let fileListTimer = null;  // 文件列表自动刷新定时器
+let currentFile = '';      // 当前选中的文件名
 
 // Agent 颜色表
 const AGENT_COLORS = [
@@ -287,77 +404,241 @@ const AGENT_COLORS = [
 // 动作方向名称
 const ACTION_NAMES = ['停', '↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
 
-// 动作方向向量（用于绘制箭头）
+// 动作方向向量（用于绘制箭头，Canvas 坐标系 Y 向下）
 const ACTION_DIRS = [
     [0, 0], [0, -1], [0.707, -0.707], [1, 0], [0.707, 0.707],
     [0, 1], [-0.707, 0.707], [-1, 0], [-0.707, -0.707]
 ];
 
 // ============================================================================
-// WebSocket 连接管理
+// 服务器通信
 // ============================================================================
-function toggleConnect() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
+
+// ---- 获取 API 基础地址 ----
+function getApiBase() {
+    return window.location.origin;
+}
+
+// ---- 检查服务器连接状态 ----
+async function checkConnection() {
+    try {
+        const resp = await fetch(getApiBase() + '/api/status', { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+            setConnected(true);
+            return true;
+        }
+    } catch (e) {}
+    setConnected(false);
+    return false;
+}
+
+// ---- 更新连接状态 UI ----
+function setConnected(connected) {
+    isConnected = connected;
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    if (connected) {
+        dot.className = 'status-dot connected';
+        text.textContent = '已连接';
     } else {
-        connect();
+        dot.className = 'status-dot disconnected';
+        text.textContent = '未连接';
     }
 }
 
-function connect() {
-    const url = document.getElementById('wsUrl').value;
-    ws = new WebSocket(url);
-
-    ws.onopen = () => {
-        document.getElementById('statusDot').className = 'status-dot green';
-        document.getElementById('statusText').textContent = '已连接';
-        document.getElementById('connectBtn').textContent = '断开';
-        document.getElementById('connectBtn').className = 'btn btn-disconnect';
-    };
-
-    ws.onclose = () => {
-        document.getElementById('statusDot').className = 'status-dot red';
-        document.getElementById('statusText').textContent = '未连接';
-        document.getElementById('connectBtn').textContent = '连接';
-        document.getElementById('connectBtn').className = 'btn btn-connect';
-    };
-
-    ws.onerror = () => {
-        document.getElementById('statusDot').className = 'status-dot red';
-        document.getElementById('statusText').textContent = '连接失败';
-    };
-
-    ws.onmessage = (event) => {
-        try {
-            frameData = JSON.parse(event.data);
-            totalFrames++;
-            updateInfo();
-        } catch (e) {
-            console.error('JSON 解析失败:', e);
+// ---- 刷新文件列表 ----
+async function refreshFileList() {
+    try {
+        const resp = await fetch(getApiBase() + '/api/files', { signal: AbortSignal.timeout(5000) });
+        if (!resp.ok) {
+            setConnected(false);
+            return;
         }
-    };
+        setConnected(true);
+
+        const files = await resp.json();
+        const select = document.getElementById('fileSelect');
+        const prevValue = select.value;
+
+        // 保留当前选中项
+        select.innerHTML = '<option value="">-- 请选择回放文件 --</option>';
+        for (const f of files) {
+            const opt = document.createElement('option');
+            opt.value = f.name;
+            let label = f.name;
+            if (f.frame_count !== null) {
+                label += ` (${f.frame_count} 帧)`;
+            }
+            if (f.is_growing) {
+                label += ' 🔴 写入中';
+            }
+            opt.textContent = label;
+            select.appendChild(opt);
+        }
+
+        // 恢复之前的选中项
+        if (prevValue) {
+            select.value = prevValue;
+        }
+    } catch (e) {
+        setConnected(false);
+    }
+}
+
+// ---- 选择文件后加载帧数据 ----
+async function onFileSelected() {
+    const select = document.getElementById('fileSelect');
+    const filename = select.value;
+    if (!filename) return;
+
+    currentFile = filename;
+    showLoading(true);
+
+    try {
+        const resp = await fetch(getApiBase() + '/api/frames?file=' + encodeURIComponent(filename), {
+            signal: AbortSignal.timeout(30000)
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert('加载失败: ' + (err.error || '未知错误'));
+            showLoading(false);
+            return;
+        }
+
+        const data = await resp.json();
+        frames = data.frames || [];
+
+        if (frames.length === 0) {
+            alert('文件中没有有效的帧数据');
+            showLoading(false);
+            return;
+        }
+
+        // 更新文件元信息
+        document.getElementById('fileMeta').textContent =
+            `共 ${frames.length} 帧`;
+
+        // 初始化播放控制
+        currentIndex = 0;
+        document.getElementById('frameSlider').max = frames.length - 1;
+        document.getElementById('frameSlider').value = 0;
+        document.getElementById('frameSlider').disabled = false;
+        document.getElementById('totalFrames').textContent = frames.length;
+
+        // 启用按钮
+        document.getElementById('btnPlay').disabled = false;
+        document.getElementById('btnNext').disabled = false;
+        document.getElementById('btnPrev').disabled = false;
+        document.getElementById('btnReset').disabled = false;
+
+        // 显示第一帧
+        showFrame(0);
+        showLoading(false);
+    } catch (e) {
+        alert('加载失败: ' + e.message);
+        showLoading(false);
+    }
+}
+
+// ---- 显示/隐藏加载遮罩 ----
+function showLoading(show) {
+    const overlay = document.getElementById('loadingOverlay');
+    overlay.className = show ? 'loading-overlay' : 'loading-overlay hidden';
 }
 
 // ============================================================================
-// 信息面板更新
+// 播放控制
 // ============================================================================
-function updateInfo() {
-    if (!frameData) return;
+function togglePlay() {
+    if (isPlaying) {
+        pausePlay();
+    } else {
+        startPlay();
+    }
+}
 
-    document.getElementById('frameId').textContent = frameData.frame_id || '--';
-    document.getElementById('episodeId').textContent = frameData.episode_id !== undefined ? frameData.episode_id : '--';
-    document.getElementById('totalFrames').textContent = totalFrames;
+function startPlay() {
+    if (frames.length === 0) return;
+    isPlaying = true;
+    document.getElementById('btnPlay').textContent = '⏸ 暂停';
+    playTimer = setInterval(() => {
+        if (currentIndex < frames.length - 1) {
+            currentIndex++;
+            showFrame(currentIndex);
+        } else {
+            pausePlay();
+        }
+    }, playInterval);
+}
 
-    if (frameData.map) {
-        const m = frameData.map;
-        document.getElementById('mapSize').textContent = `${m.width} × ${m.height}`;
+function pausePlay() {
+    isPlaying = false;
+    document.getElementById('btnPlay').textContent = '▶ 播放';
+    if (playTimer) {
+        clearInterval(playTimer);
+        playTimer = null;
+    }
+}
+
+function stepNext() {
+    pausePlay();
+    if (currentIndex < frames.length - 1) {
+        currentIndex++;
+        showFrame(currentIndex);
+    }
+}
+
+function stepPrev() {
+    pausePlay();
+    if (currentIndex > 0) {
+        currentIndex--;
+        showFrame(currentIndex);
+    }
+}
+
+function resetPlay() {
+    pausePlay();
+    currentIndex = 0;
+    showFrame(0);
+}
+
+function seekFrame(val) {
+    pausePlay();
+    currentIndex = parseInt(val);
+    showFrame(currentIndex);
+}
+
+function changeSpeed() {
+    playInterval = parseInt(document.getElementById('speedSelect').value);
+    if (isPlaying) {
+        pausePlay();
+        startPlay();
+    }
+}
+
+// ============================================================================
+// 显示指定帧
+// ============================================================================
+function showFrame(index) {
+    if (index < 0 || index >= frames.length) return;
+
+    const data = frames[index];
+    document.getElementById('frameSlider').value = index;
+    document.getElementById('frameLabel').textContent = `${index + 1} / ${frames.length}`;
+
+    // 更新信息面板
+    document.getElementById('frameId').textContent = data.frame_id || '--';
+    document.getElementById('episodeId').textContent = data.episode_id !== undefined ? data.episode_id : '--';
+
+    if (data.map) {
+        document.getElementById('mapSize').textContent = `${data.map.width} × ${data.map.height}`;
     }
 
     // 更新 Agent 列表
     const agentList = document.getElementById('agentList');
-    if (frameData.agents && frameData.agents.length > 0) {
+    if (data.agents && data.agents.length > 0) {
         let html = '';
-        for (const agent of frameData.agents) {
+        for (const agent of data.agents) {
             const color = AGENT_COLORS[agent.id % AGENT_COLORS.length];
             const statusClass = agent.done ? 'done' : 'active';
             const statusText = agent.done ? '✓ 完成' : '● 活跃';
@@ -373,6 +654,9 @@ function updateInfo() {
         }
         agentList.innerHTML = html;
     }
+
+    // 触发渲染
+    renderFrame(data);
 }
 
 // ============================================================================
@@ -385,23 +669,16 @@ function resizeCanvas() {
     const container = canvas.parentElement;
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
+    // 重新渲染当前帧
+    if (frames.length > 0 && currentIndex < frames.length) {
+        renderFrame(frames[currentIndex]);
+    }
 }
 
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-function render() {
-    requestAnimationFrame(render);
-
-    // FPS 计算
-    const now = performance.now();
-    fpsCounter++;
-    if (now - lastFpsUpdate > 1000) {
-        document.getElementById('fpsText').textContent = `FPS: ${fpsCounter}`;
-        fpsCounter = 0;
-        lastFpsUpdate = now;
-    }
-
+function renderFrame(data) {
     const w = canvas.width;
     const h = canvas.height;
 
@@ -409,16 +686,15 @@ function render() {
     ctx.fillStyle = '#0f1923';
     ctx.fillRect(0, 0, w, h);
 
-    if (!frameData || !frameData.map) {
-        // 无数据时显示提示
+    if (!data || !data.map) {
         ctx.fillStyle = '#607d8b';
         ctx.font = '16px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('等待数据连接...', w / 2, h / 2);
+        ctx.fillText('请选择回放文件', w / 2, h / 2);
         return;
     }
 
-    const map = frameData.map;
+    const map = data.map;
     const mapW = map.width;
     const mapH = map.height;
 
@@ -441,7 +717,7 @@ function render() {
     // ---- 1. 绘制网格 ----
     ctx.strokeStyle = '#1a2a3a';
     ctx.lineWidth = 0.5;
-    const gridStep = 2000;  // 每 2000cm 一条网格线
+    const gridStep = 2000;
 
     for (let x = 0; x <= mapW; x += gridStep) {
         const [cx, cy1] = toCanvas(x, 0);
@@ -471,7 +747,6 @@ function render() {
             const [x1, y1] = toCanvas(wall.x1, wall.y1);
             const [x2, y2] = toCanvas(wall.x2, wall.y2);
 
-            // 计算墙壁法线方向
             const dx = x2 - x1;
             const dy = y2 - y1;
             const len = Math.sqrt(dx * dx + dy * dy);
@@ -534,8 +809,8 @@ function render() {
     }
 
     // ---- 5. 绘制 Agent ----
-    if (frameData.agents) {
-        for (const agent of frameData.agents) {
+    if (data.agents) {
+        for (const agent of data.agents) {
             const color = AGENT_COLORS[agent.id % AGENT_COLORS.length];
             const [ax, ay] = toCanvas(agent.x, agent.y);
             const r = Math.max(8, 200 * scale);
@@ -553,13 +828,12 @@ function render() {
             ctx.arc(ax, ay, r, 0, Math.PI * 2);
             ctx.stroke();
 
-            // 方向箭头（action_id > 0 时绘制）
+            // 方向箭头
             if (agent.action_id > 0 && agent.action_id <= 8) {
                 const dir = ACTION_DIRS[agent.action_id];
                 const arrowLen = r * 2.5;
-                // 注意 Y 轴翻转
                 const endX = ax + dir[0] * arrowLen;
-                const endY = ay - dir[1] * arrowLen;
+                const endY = ay + dir[1] * arrowLen;
 
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 2;
@@ -568,7 +842,6 @@ function render() {
                 ctx.lineTo(endX, endY);
                 ctx.stroke();
 
-                // 箭头头部
                 const headLen = r * 0.8;
                 const angle = Math.atan2(endY - ay, endX - ax);
                 ctx.beginPath();
@@ -604,8 +877,52 @@ function render() {
     }
 }
 
-// 启动渲染循环
-render();
+// ============================================================================
+// 初始化
+// ============================================================================
+
+// 初始渲染（空画布提示）
+renderFrame(null);
+
+// 页面加载后自动连接服务器并刷新文件列表
+(async function init() {
+    const connected = await checkConnection();
+    if (connected) {
+        await refreshFileList();
+    }
+
+    // 每 5 秒自动刷新文件列表（发现新文件）
+    fileListTimer = setInterval(async () => {
+        if (isConnected) {
+            await refreshFileList();
+        } else {
+            await checkConnection();
+            if (isConnected) {
+                await refreshFileList();
+            }
+        }
+    }, 5000);
+})();
+
+// 键盘快捷键
+document.addEventListener('keydown', (e) => {
+    if (frames.length === 0) return;
+    switch (e.key) {
+        case ' ':
+            e.preventDefault();
+            togglePlay();
+            break;
+        case 'ArrowRight':
+            stepNext();
+            break;
+        case 'ArrowLeft':
+            stepPrev();
+            break;
+        case 'Home':
+            resetPlay();
+            break;
+    }
+});
 </script>
 </body>
 </html>

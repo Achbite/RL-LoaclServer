@@ -19,7 +19,7 @@ services:
       - maze-net
     ports:
       - "9001:9001"                     # Client 预留端口
-      - "9004:9004"                     # 可视化 WebSocket 端口
+      - "9004:9004"                     # 可视化 HTTP 服务端口
     stdin_open: true                     # 保持 stdin 打开（交互式 bash）
     tty: true                            # 分配伪终端
 
