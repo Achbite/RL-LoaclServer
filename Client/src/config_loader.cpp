@@ -135,9 +135,7 @@ bool LoadClientConfig(const std::string& yaml_path, ClientConfig& out_config) {
     // --- env ---
     out_config.env.map_width      = SafeFloat(FindValue(entries, "env", "map_width"),      20000.0f);
     out_config.env.map_height     = SafeFloat(FindValue(entries, "env", "map_height"),     20000.0f);
-    out_config.env.move_speed     = SafeFloat(FindValue(entries, "env", "move_speed"),     300.0f);
-    out_config.env.frame_interval = SafeFloat(FindValue(entries, "env", "frame_interval"), 0.2f);
-    out_config.env.goal_radius    = SafeFloat(FindValue(entries, "env", "goal_radius"),    300.0f);
+    out_config.env.grid_size      = SafeInt(FindValue(entries, "env", "grid_size"),        500);
     out_config.env.max_steps      = SafeInt(FindValue(entries, "env", "max_steps"),        2000);
     out_config.env.start_x        = SafeFloat(FindValue(entries, "env", "start_x"),        500.0f);
     out_config.env.start_y        = SafeFloat(FindValue(entries, "env", "start_y"),        500.0f);

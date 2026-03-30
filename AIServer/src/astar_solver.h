@@ -21,8 +21,8 @@ public:
     // 规划路径（连续坐标 → 路径点序列）
     bool PlanPath(float start_x, float start_y, float end_x, float end_y);
 
-    // 根据当前位置获取推荐动作 ID（0-8）
-    int GetAction(float cur_x, float cur_y) const;
+    // 根据当前网格坐标获取推荐动作 ID（0-8）
+    int GetAction(int cur_gx, int cur_gy) const;
 
     // 获取路径点数量
     int GetPathLength() const { return static_cast<int>(path_.size()); }

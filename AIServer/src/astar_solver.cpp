@@ -205,66 +205,58 @@ bool AStarSolver::PlanPath(float start_x, float start_y, float end_x, float end_
     return true;
 }
 
-// ---- 根据当前位置获取推荐动作 ID ----
-int AStarSolver::GetAction(float cur_x, float cur_y) const {
+// ---- 根据当前网格坐标获取推荐动作 ID ----
+int AStarSolver::GetAction(int cur_gx, int cur_gy) const {
     if (path_.empty()) return 0;
 
-    // 找到路径上距离当前位置最近的点
-    GridPos cur_grid = ToGrid(cur_x, cur_y);
+    // 找到路径上距离当前网格最近的点
     int best_idx = 0;
-    int best_dist = std::abs(cur_grid.gx - path_[0].gx) + std::abs(cur_grid.gy - path_[0].gy);
+    int best_dist = std::abs(cur_gx - path_[0].gx) + std::abs(cur_gy - path_[0].gy);
 
     for (int i = 1; i < static_cast<int>(path_.size()); ++i) {
-        int dist = std::abs(cur_grid.gx - path_[i].gx) + std::abs(cur_grid.gy - path_[i].gy);
+        int dist = std::abs(cur_gx - path_[i].gx) + std::abs(cur_gy - path_[i].gy);
         if (dist < best_dist) {
             best_dist = dist;
             best_idx = i;
         }
     }
 
-    // 选择路径上的下一个目标点（跳过已经到达的点）
+    // 选择路径上的下一个目标点
     int target_idx = std::min(best_idx + 1, static_cast<int>(path_.size()) - 1);
 
-    // 计算目标点的世界坐标
-    float target_x, target_y;
-    ToWorld(path_[target_idx], target_x, target_y);
+    // 计算网格级方向偏移
+    int dx = path_[target_idx].gx - cur_gx;
+    int dy = path_[target_idx].gy - cur_gy;
 
-    // 计算方向向量
-    float dx = target_x - cur_x;
-    float dy = target_y - cur_y;
-    float dist = std::sqrt(dx * dx + dy * dy);
+    // 已在目标点上则不动
+    if (dx == 0 && dy == 0) return 0;
 
-    // 距离极小时不动
-    if (dist < 1.0f) return 0;
+    // 将偏移 clamp 到 [-1, 1]（每步只移动一格）
+    if (dx > 0) dx = 1;
+    else if (dx < 0) dx = -1;
+    if (dy > 0) dy = 1;
+    else if (dy < 0) dy = -1;
 
-    // 归一化方向
-    dx /= dist;
-    dy /= dist;
-
-    // 9 个动作的方向向量
-    static const float action_dirs[9][2] = {
-        { 0.0f,  0.0f},         // 0: 不动
-        { 0.0f,  1.0f},         // 1: 上 (Y+)
-        { 0.707f, 0.707f},      // 2: 右上
-        { 1.0f,  0.0f},         // 3: 右 (X+)
-        { 0.707f,-0.707f},      // 4: 右下
-        { 0.0f, -1.0f},         // 5: 下 (Y-)
-        {-0.707f,-0.707f},      // 6: 左下
-        {-1.0f,  0.0f},         // 7: 左 (X-)
-        {-0.707f, 0.707f},      // 8: 左上
+    // 网格偏移 → action_id 映射表
+    // (dx, dy) → action_id
+    static const int grid_action_dirs[9][2] = {
+        { 0,  0},   // 0: 不动
+        { 0,  1},   // 1: 上 (Y+)
+        { 1,  1},   // 2: 右上
+        { 1,  0},   // 3: 右 (X+)
+        { 1, -1},   // 4: 右下
+        { 0, -1},   // 5: 下 (Y-)
+        {-1, -1},   // 6: 左下
+        {-1,  0},   // 7: 左 (X-)
+        {-1,  1},   // 8: 左上
     };
 
-    // 找到与目标方向最接近的动作（跳过动作 0=不动）
-    int best_action = 1;
-    float best_dot = -2.0f;
-
+    // 查找匹配的 action_id
     for (int a = 1; a <= 8; ++a) {
-        float dot = dx * action_dirs[a][0] + dy * action_dirs[a][1];
-        if (dot > best_dot) {
-            best_dot = dot;
-            best_action = a;
+        if (grid_action_dirs[a][0] == dx && grid_action_dirs[a][1] == dy) {
+            return a;
         }
     }
 
-    return best_action;
+    return 0;
 }

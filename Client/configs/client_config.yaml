@@ -8,15 +8,13 @@
 run:
   agent_num: 1                    # Agent 数量，即同时参与训练的智能体个数
   max_episodes: 100               # 最大 Episode 数，训练总轮数上限
-  log_interval: 100               # 日志打印间隔（帧），每隔多少帧输出一次状态日志
+  log_interval: 10                # 日志打印间隔（帧），每隔多少帧输出一次状态日志
 
 # --- 环境参数（MazeEnv 使用，定义迷宫世界的物理规格）---
 env:
   map_width: 20000.0              # 地图宽度 (cm)，X 轴方向的可活动范围
   map_height: 20000.0             # 地图高度 (cm)，Y 轴方向的可活动范围
-  move_speed: 300.0               # 移动速度 (cm/s)，Agent 每秒移动的距离
-  frame_interval: 0.2             # 帧间隔 (s)，每帧的时间步长；每帧移动距离 = move_speed × frame_interval
-  goal_radius: 300.0              # 通关判定距离 (cm)，Agent 与终点距离 ≤ 此值即判定通关
+  grid_size: 500                  # 网格大小 (cm)，将连续坐标离散化为网格，每格 500cm
   max_steps: 2000                 # 最大步数，单个 Episode 内的帧数上限，超过则判定超时
   start_x: 500.0                  # 起点 X 坐标 (cm)，Agent 每个 Episode 的初始 X 位置
   start_y: 500.0                  # 起点 Y 坐标 (cm)，Agent 每个 Episode 的初始 Y 位置

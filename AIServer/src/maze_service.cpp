@@ -13,14 +13,7 @@ MazeServiceImpl::MazeServiceImpl(const AIServerConfig& config)
 void MazeServiceImpl::InitAgentSolver(AgentRuntime& agent) {
     agent.solver.Init(map_width_, map_height_, config_.strategy.grid_size);
 
-    // TODO: 后续从地图文件加载墙壁，当前使用与 test_maze.json 一致的硬编码墙壁
-    // 外围边界
-    agent.solver.AddWall(0, 0, map_width_, 0, 100);
-    agent.solver.AddWall(map_width_, 0, map_width_, map_height_, 100);
-    agent.solver.AddWall(map_width_, map_height_, 0, map_height_, 100);
-    agent.solver.AddWall(0, map_height_, 0, 0, 100);
-
-    // 内部隔墙（与 test_maze.json 一致）
+    // 内部隔墙（与 Client 端 LoadWalls 一致，不添加外围边界墙壁，网格越界检查天然阻止越界）
     agent.solver.AddWall(5000, 0, 5000, 14000, 100);
     agent.solver.AddWall(10000, 6000, 10000, 20000, 100);
     agent.solver.AddWall(15000, 0, 15000, 14000, 100);
@@ -116,22 +109,29 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
         AgentRuntime& agent = it->second;
 
         if (config_.strategy.mode == "astar") {
-            // A* 策略：定期重新规划
+            // 接收的 pos 为网格坐标（Client 上报整数值）
+            int cur_gx = static_cast<int>(pos_x);
+            int cur_gy = static_cast<int>(pos_y);
+
+            // A* 策略：定期重新规划（从当前网格位置到终点）
             if (config_.strategy.replan_interval > 0 &&
                 frame_id > 0 &&
                 frame_id % config_.strategy.replan_interval == 0) {
-                agent.path_valid = agent.solver.PlanPath(pos_x, pos_y, end_x_, end_y_);
+                // 将网格坐标转换为连续坐标（网格中心）用于 PlanPath
+                float world_x = (cur_gx + 0.5f) * config_.strategy.grid_size;
+                float world_y = (cur_gy + 0.5f) * config_.strategy.grid_size;
+                agent.path_valid = agent.solver.PlanPath(world_x, world_y, end_x_, end_y_);
                 if (!agent.path_valid) {
-                    LOG_WARN("MazeService", "Agent[%d] 路径规划失败 frame=%d pos=(%.1f,%.1f)",
-                             agent_id, frame_id, pos_x, pos_y);
+                    LOG_WARN("MazeService", "Agent[%d] 路径规划失败 frame=%d grid=(%d,%d)",
+                             agent_id, frame_id, cur_gx, cur_gy);
                 }
             }
 
             if (agent.path_valid) {
-                int act = agent.solver.GetAction(pos_x, pos_y);
+                int act = agent.solver.GetAction(cur_gx, cur_gy);
                 action->set_action_id(act);
                 agent.last_action = act;
-                LOG_FILE("RPC:Update", "  Agent[%d]: action=%d (astar)", agent_id, act);
+                LOG_FILE("RPC:Update", "  Agent[%d]: action=%d (astar) grid=(%d,%d)", agent_id, act, cur_gx, cur_gy);
             } else {
                 action->set_action_id(0);
                 LOG_FILE("RPC:Update", "  Agent[%d]: action=0 (no_path)", agent_id);
