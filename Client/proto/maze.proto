@@ -1,0 +1,132 @@
+// ============================================================================
+// 迷宫训练框架通信协议
+// 文件位置：Client/proto/maze.proto（唯一源头）
+// 共享方式：AIServer 构建时复制此文件，Learner 通过 grpc_tools 生成 Python 绑定
+// ============================================================================
+
+syntax = "proto3";
+package maze;
+
+// gRPC 使用自己的代码生成插件，不需要 Protobuf 内置的 generic services
+option cc_generic_services = false;
+
+// ============================================================================
+// 公共类型
+// ============================================================================
+
+// --- 二维向量 ---
+message Vec2 {
+    float x = 1;
+    float y = 2;
+}
+
+// ============================================================================
+// Client ↔ AIServer 消息（gRPC）
+// ============================================================================
+
+// ---- 初始化 ----
+
+// 初始化请求：Client 启动时发送，携带地图基本信息
+message InitReq {
+    int32 agent_num = 1; // Agent 数量
+    Vec2  map_size  = 2; // 地图尺寸（宽, 高）
+    Vec2  start_pos = 3; // 起点坐标
+    Vec2  end_pos   = 4; // 终点坐标
+}
+
+// 初始化响应
+message InitRsp {
+    int32 ret_code = 1; // 0=成功
+}
+
+// ---- 帧状态上报 ----
+
+// 单个 Agent 的帧状态
+message AgentState {
+    int32 agent_id = 1; // Agent 唯一标识
+    Vec2  pos      = 2; // 当前位置
+    bool  is_done  = 3; // 是否已结束（到达终点或超时）
+}
+
+// 帧状态上报请求：Client 每帧发送所有 Agent 的状态
+message UpdateReq {
+    repeated AgentState agents   = 1; // 所有 Agent 的状态
+    int32               frame_id = 2; // 当前帧号（从 0 开始递增）
+}
+
+// ---- 动作下发 ----
+
+// 单个 Agent 的动作指令
+message AgentAction {
+    int32 agent_id  = 1; // Agent 唯一标识
+    int32 action_id = 2; // 动作 ID：0=不动, 1-8=八方向
+}
+
+// 动作下发响应：AIServer 返回每个 Agent 的动作
+message UpdateRsp {
+    repeated AgentAction actions = 1; // 所有 Agent 的动作
+}
+
+// ---- Episode 结束 ----
+
+// Episode 结束通知：所有 Agent 都 done 后 Client 发送
+message EpisodeEndReq {
+    int32 episode_id = 1; // Episode 编号
+}
+
+// Episode 结束确认
+message EpisodeEndRsp {
+    int32 ret_code = 1; // 0=成功
+}
+
+// ============================================================================
+// AIServer → Learner 样本协议（gRPC）
+// ============================================================================
+
+// ---- 单帧样本 ----
+message Sample {
+    repeated float obs          = 1; // 特征向量（Demo 阶段 5 维，后续扩展到 20 维）
+    int32          action       = 2; // 动作 ID (0-8)
+    float          reward       = 3; // 即时奖励
+    float          old_log_prob = 4; // 旧策略 log 概率
+    float          old_vpred    = 5; // 旧价值估计 V(s)
+    float          advantage    = 6; // GAE 优势值
+    float          td_return    = 7; // TD(λ) 回报
+    float          mask         = 8; // 1.0=有效样本, 0.0=填充
+}
+
+// ---- 样本批次 ----
+// 每 TMax=32 帧或 Episode 结束时，AIServer 打包发送
+message SampleBatch {
+    int32           episode_id = 1; // Episode 编号
+    int32           agent_id   = 2; // Agent 编号
+    repeated Sample samples    = 3; // 帧样本序列
+}
+
+// ---- 样本发送响应 ----
+message SampleResponse {
+    int32 ret_code      = 1; // 0=成功
+    int32 model_version = 2; // Learner 当前模型版本号
+}
+
+// ============================================================================
+// gRPC 服务定义
+// ============================================================================
+
+// Client↔AIServer gRPC 服务：处理初始化、帧同步、Episode 生命周期
+service MazeService {
+    // 初始化：Client 启动时调用，注册 Agent 和地图信息
+    rpc Init (InitReq) returns (InitRsp);
+
+    // 帧同步：Client 每帧上报状态，AIServer 返回动作
+    rpc Update (UpdateReq) returns (UpdateRsp);
+
+    // Episode 结束：所有 Agent 都 done 后 Client 调用
+    rpc EndEpisode (EpisodeEndReq) returns (EpisodeEndRsp);
+}
+
+// Learner 端 gRPC 服务：接收 AIServer 推送的样本批次
+service LearnerService {
+    // 发送样本批次：AIServer 每 32 帧调用一次
+    rpc SendSamples (SampleBatch) returns (SampleResponse);
+}

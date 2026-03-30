@@ -1,0 +1,64 @@
+# ============================================================================
+# 迷宫训练框架 - Docker Compose 编排（开发模式）
+# 用法：
+#   AIServer：docker compose up -d maze-aiserver（后台启动）
+#   Client：  docker compose run --rm maze-client bash（交互式）
+# ============================================================================
+
+services:
+  # ---- Client：迷宫环境模拟器 ----
+  maze-client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: maze-client
+    volumes:
+      - .:/workspace                    # 源码 bind mount
+    working_dir: /workspace/Client      # 进入容器即在 Client 目录
+    networks:
+      - maze-net
+    ports:
+      - "9001:9001"                     # Client 预留端口
+      - "9004:9004"                     # 可视化 WebSocket 端口
+    stdin_open: true                     # 保持 stdin 打开（交互式 bash）
+    tty: true                            # 分配伪终端
+
+  # ---- AIServer：AI 决策服务 ----
+  maze-aiserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.aiserver
+    container_name: maze-aiserver
+    volumes:
+      - .:/workspace
+    working_dir: /workspace/AIServer    # 进入容器即在 AIServer 目录
+    networks:
+      - maze-net
+    ports:
+      - "9002:9002"                     # gRPC 端口（Client → AIServer）
+    stdin_open: true
+    tty: true
+    command: ["bash", "-c", "echo 'AIServer 容器已就绪' && sleep infinity"]
+
+  # ---- Learner：强化学习训练器（预留）----
+  maze-learner:
+    image: python:3.11-slim
+    container_name: maze-learner
+    volumes:
+      - .:/workspace
+      - model-data:/workspace/models    # 模型文件共享卷
+    working_dir: /workspace
+    networks:
+      - maze-net
+    ports:
+      - "9003:9003"                     # Learner gRPC 端口
+    command: ["bash", "-c", "echo 'Learner 容器已就绪（待实现）' && sleep infinity"]
+
+# ---- 网络 ----
+networks:
+  maze-net:
+    driver: bridge
+
+# ---- 共享卷 ----
+volumes:
+  model-data:

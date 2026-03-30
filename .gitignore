@@ -11,6 +11,7 @@ models/*.pth
 # 日志
 logs/*.log
 logs/*.csv
+AIServer/log/
 
 # Python
 __pycache__/
@@ -48,5 +49,10 @@ cmake-build-*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Docker
+/tmp/dockerd.log
+.docker_build_hash
+.docker_build_hash_*
 
 .codebuddy

@@ -1,0 +1,22 @@
+# ============================================================================
+# AIServer 配置文件 - 迷宫训练框架
+# 说明：AI 决策服务的运行参数、策略参数、网络参数集中管理
+#       修改后无需重新编译，重启 AIServer 即可生效
+# ============================================================================
+
+# --- 服务参数（gRPC 服务端配置）---
+server:
+  listen_port: 9002               # gRPC 监听端口，Client 通过此端口连接
+  max_agents: 10                  # 最大支持的 Agent 数量
+
+# --- 策略参数（A* 测试模式）---
+strategy:
+  mode: "astar"                   # 策略模式：astar=A*寻路测试, random=随机策略
+  grid_size: 500                  # A* 网格大小 (cm)，将连续坐标离散化为网格
+  replan_interval: 10             # 重新规划路径的帧间隔（0=仅初始规划一次）
+
+# --- 网络参数（AIServer → Learner 的 gRPC 通信配置）---
+learner:
+  host: "maze-learner"            # Learner 地址，Docker 环境使用服务名（Compose DNS 自动解析）
+  port: 9003                      # Learner gRPC 端口
+  send_interval: 32               # 样本发送间隔（帧），每隔多少帧发送一批样本

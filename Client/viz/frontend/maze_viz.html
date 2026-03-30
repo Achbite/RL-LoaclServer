@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>迷宫训练框架 - 实时可视化</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f1923;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header */
+.header {
+    background: linear-gradient(135deg, #1a2332 0%, #0d1b2a 100%);
+    border-bottom: 1px solid #2a3a4a;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.header h1 {
+    font-size: 18px;
+    color: #4fc3f7;
+    font-weight: 600;
+}
+.header h1 span { color: #ff9800; }
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #90a4ae;
+}
+.status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot.green { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-dot.red { background: #f44336; box-shadow: 0 0 6px #f44336; }
+.status-dot.yellow { background: #ff9800; box-shadow: 0 0 6px #ff9800; }
+
+/* Main layout */
+.main {
+    display: flex;
+    flex: 1;
+    padding: 16px;
+    gap: 16px;
+}
+
+/* Canvas container */
+.canvas-container {
+    flex: 1;
+    background: #1a2332;
+    border: 1px solid #2a3a4a;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+}
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Info panel */
+.info-panel {
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.card {
+    background: #1a2332;
+    border: 1px solid #2a3a4a;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.card-header {
+    padding: 10px 16px;
+    background: #1e2d3d;
+    border-bottom: 1px solid #2a3a4a;
+    font-size: 14px;
+    font-weight: 600;
+    color: #b0bec5;
+}
+.card-body { padding: 12px 16px; }
+
+/* Info items */
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 13px;
+}
+.info-label { color: #607d8b; }
+.info-value { color: #eceff1; font-weight: 500; }
+.info-value.success { color: #4caf50; }
+.info-value.warning { color: #ff9800; }
+
+/* Agent list */
+.agent-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: #0f1923;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+.agent-color {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.agent-name { font-weight: 500; min-width: 60px; }
+.agent-pos { color: #78909c; font-size: 12px; }
+.agent-status { font-size: 11px; margin-left: auto; }
+.agent-status.done { color: #4caf50; }
+.agent-status.active { color: #4fc3f7; }
+
+/* Connection input */
+.connect-section {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.connect-section input {
+    background: #0f1923;
+    border: 1px solid #2a3a4a;
+    color: #e0e0e0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    flex: 1;
+}
+.btn {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn:hover { filter: brightness(1.15); }
+.btn-connect { background: #1b5e20; color: #a5d6a7; }
+.btn-disconnect { background: #b71c1c; color: #ef9a9a; }
+
+/* Legend */
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 12px;
+    color: #78909c;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.legend-box {
+    width: 14px; height: 14px;
+    border-radius: 2px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🏗️ 迷宫训练框架 — <span>实时可视化</span></h1>
+    <div class="header-controls">
+        <div class="status-indicator">
+            <span class="status-dot red" id="statusDot"></span>
+            <span id="statusText">未连接</span>
+        </div>
+        <span style="font-size:12px;color:#607d8b;" id="fpsText">FPS: --</span>
+    </div>
+</div>
+
+<div class="main">
+    <div class="canvas-container">
+        <canvas id="mazeCanvas"></canvas>
+    </div>
+
+    <div class="info-panel">
+        <!-- 连接控制 -->
+        <div class="card">
+            <div class="card-header">🔌 连接</div>
+            <div class="card-body">
+                <div class="connect-section">
+                    <input type="text" id="wsUrl" value="ws://127.0.0.1:9004" placeholder="WebSocket 地址">
+                    <button class="btn btn-connect" id="connectBtn" onclick="toggleConnect()">连接</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 帧信息 -->
+        <div class="card">
+            <div class="card-header">📊 帧信息</div>
+            <div class="card-body">
+                <div class="info-row">
+                    <span class="info-label">帧号</span>
+                    <span class="info-value" id="frameId">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Episode</span>
+                    <span class="info-value" id="episodeId">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">地图尺寸</span>
+                    <span class="info-value" id="mapSize">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">接收帧数</span>
+                    <span class="info-value" id="totalFrames">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent 列表 -->
+        <div class="card">
+            <div class="card-header">🤖 Agent 列表</div>
+            <div class="card-body" id="agentList">
+                <div style="color:#607d8b;font-size:13px;">等待数据...</div>
+            </div>
+        </div>
+
+        <!-- 图例 -->
+        <div class="card">
+            <div class="card-header">📋 图例</div>
+            <div class="card-body">
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-box" style="background:#37474f;"></div>
+                        <span>墙壁</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box" style="background:#4caf50;"></div>
+                        <span>终点</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box" style="background:#ff9800;"></div>
+                        <span>起点</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box" style="background:#4fc3f7;border-radius:50%;"></div>
+                        <span>Agent</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================================
+// 全局状态
+// ============================================================================
+let ws = null;
+let frameData = null;
+let totalFrames = 0;
+let lastFrameTime = 0;
+let fpsCounter = 0;
+let lastFpsUpdate = 0;
+
+// Agent 颜色表
+const AGENT_COLORS = [
+    '#4fc3f7', '#ff9800', '#e91e63', '#9c27b0',
+    '#00bcd4', '#8bc34a', '#ff5722', '#3f51b5',
+    '#cddc39', '#795548'
+];
+
+// 动作方向名称
+const ACTION_NAMES = ['停', '↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+
+// 动作方向向量（用于绘制箭头）
+const ACTION_DIRS = [
+    [0, 0], [0, -1], [0.707, -0.707], [1, 0], [0.707, 0.707],
+    [0, 1], [-0.707, 0.707], [-1, 0], [-0.707, -0.707]
+];
+
+// ============================================================================
+// WebSocket 连接管理
+// ============================================================================
+function toggleConnect() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+    } else {
+        connect();
+    }
+}
+
+function connect() {
+    const url = document.getElementById('wsUrl').value;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+        document.getElementById('statusDot').className = 'status-dot green';
+        document.getElementById('statusText').textContent = '已连接';
+        document.getElementById('connectBtn').textContent = '断开';
+        document.getElementById('connectBtn').className = 'btn btn-disconnect';
+    };
+
+    ws.onclose = () => {
+        document.getElementById('statusDot').className = 'status-dot red';
+        document.getElementById('statusText').textContent = '未连接';
+        document.getElementById('connectBtn').textContent = '连接';
+        document.getElementById('connectBtn').className = 'btn btn-connect';
+    };
+
+    ws.onerror = () => {
+        document.getElementById('statusDot').className = 'status-dot red';
+        document.getElementById('statusText').textContent = '连接失败';
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            frameData = JSON.parse(event.data);
+            totalFrames++;
+            updateInfo();
+        } catch (e) {
+            console.error('JSON 解析失败:', e);
+        }
+    };
+}
+
+// ============================================================================
+// 信息面板更新
+// ============================================================================
+function updateInfo() {
+    if (!frameData) return;
+
+    document.getElementById('frameId').textContent = frameData.frame_id || '--';
+    document.getElementById('episodeId').textContent = frameData.episode_id !== undefined ? frameData.episode_id : '--';
+    document.getElementById('totalFrames').textContent = totalFrames;
+
+    if (frameData.map) {
+        const m = frameData.map;
+        document.getElementById('mapSize').textContent = `${m.width} × ${m.height}`;
+    }
+
+    // 更新 Agent 列表
+    const agentList = document.getElementById('agentList');
+    if (frameData.agents && frameData.agents.length > 0) {
+        let html = '';
+        for (const agent of frameData.agents) {
+            const color = AGENT_COLORS[agent.id % AGENT_COLORS.length];
+            const statusClass = agent.done ? 'done' : 'active';
+            const statusText = agent.done ? '✓ 完成' : '● 活跃';
+            const actionName = ACTION_NAMES[agent.action_id] || '?';
+            html += `
+                <div class="agent-item">
+                    <div class="agent-color" style="background:${color};"></div>
+                    <span class="agent-name">Agent ${agent.id}</span>
+                    <span class="agent-pos">(${Math.round(agent.x)}, ${Math.round(agent.y)}) ${actionName}</span>
+                    <span class="agent-status ${statusClass}">${statusText}</span>
+                </div>
+            `;
+        }
+        agentList.innerHTML = html;
+    }
+}
+
+// ============================================================================
+// Canvas 渲染
+// ============================================================================
+const canvas = document.getElementById('mazeCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    const container = canvas.parentElement;
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+}
+
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function render() {
+    requestAnimationFrame(render);
+
+    // FPS 计算
+    const now = performance.now();
+    fpsCounter++;
+    if (now - lastFpsUpdate > 1000) {
+        document.getElementById('fpsText').textContent = `FPS: ${fpsCounter}`;
+        fpsCounter = 0;
+        lastFpsUpdate = now;
+    }
+
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // 清空画布
+    ctx.fillStyle = '#0f1923';
+    ctx.fillRect(0, 0, w, h);
+
+    if (!frameData || !frameData.map) {
+        // 无数据时显示提示
+        ctx.fillStyle = '#607d8b';
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('等待数据连接...', w / 2, h / 2);
+        return;
+    }
+
+    const map = frameData.map;
+    const mapW = map.width;
+    const mapH = map.height;
+
+    // 计算缩放和偏移（保持宽高比，居中显示）
+    const padding = 40;
+    const scaleX = (w - padding * 2) / mapW;
+    const scaleY = (h - padding * 2) / mapH;
+    const scale = Math.min(scaleX, scaleY);
+    const offsetX = (w - mapW * scale) / 2;
+    const offsetY = (h - mapH * scale) / 2;
+
+    // 坐标转换函数（游戏坐标 → 画布坐标，Y 轴翻转）
+    function toCanvas(gx, gy) {
+        return [
+            offsetX + gx * scale,
+            offsetY + (mapH - gy) * scale
+        ];
+    }
+
+    // ---- 1. 绘制网格 ----
+    ctx.strokeStyle = '#1a2a3a';
+    ctx.lineWidth = 0.5;
+    const gridStep = 2000;  // 每 2000cm 一条网格线
+
+    for (let x = 0; x <= mapW; x += gridStep) {
+        const [cx, cy1] = toCanvas(x, 0);
+        const [, cy2] = toCanvas(x, mapH);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy1);
+        ctx.lineTo(cx, cy2);
+        ctx.stroke();
+    }
+    for (let y = 0; y <= mapH; y += gridStep) {
+        const [cx1, cy] = toCanvas(0, y);
+        const [cx2] = toCanvas(mapW, y);
+        ctx.beginPath();
+        ctx.moveTo(cx1, cy);
+        ctx.lineTo(cx2, cy);
+        ctx.stroke();
+    }
+
+    // ---- 2. 绘制墙壁 ----
+    if (map.walls) {
+        ctx.fillStyle = '#37474f';
+        ctx.strokeStyle = '#546e7a';
+        ctx.lineWidth = 1;
+
+        for (const wall of map.walls) {
+            const t = (wall.thickness || 100) * scale;
+            const [x1, y1] = toCanvas(wall.x1, wall.y1);
+            const [x2, y2] = toCanvas(wall.x2, wall.y2);
+
+            // 计算墙壁法线方向
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len < 0.1) continue;
+
+            const nx = -dy / len * t / 2;
+            const ny = dx / len * t / 2;
+
+            ctx.beginPath();
+            ctx.moveTo(x1 + nx, y1 + ny);
+            ctx.lineTo(x2 + nx, y2 + ny);
+            ctx.lineTo(x2 - nx, y2 - ny);
+            ctx.lineTo(x1 - nx, y1 - ny);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+
+    // ---- 3. 绘制起点 ----
+    if (map.start_pos) {
+        const [sx, sy] = toCanvas(map.start_pos.x, map.start_pos.y);
+        const r = Math.max(6, 300 * scale);
+
+        ctx.fillStyle = 'rgba(255, 152, 0, 0.3)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, r * 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ff9800';
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('S', sx, sy + 4);
+    }
+
+    // ---- 4. 绘制终点 ----
+    if (map.end_pos) {
+        const [ex, ey] = toCanvas(map.end_pos.x, map.end_pos.y);
+        const r = Math.max(6, 300 * scale);
+
+        ctx.fillStyle = 'rgba(76, 175, 80, 0.3)';
+        ctx.beginPath();
+        ctx.arc(ex, ey, r * 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#4caf50';
+        ctx.beginPath();
+        ctx.arc(ex, ey, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('E', ex, ey + 4);
+    }
+
+    // ---- 5. 绘制 Agent ----
+    if (frameData.agents) {
+        for (const agent of frameData.agents) {
+            const color = AGENT_COLORS[agent.id % AGENT_COLORS.length];
+            const [ax, ay] = toCanvas(agent.x, agent.y);
+            const r = Math.max(8, 200 * scale);
+
+            // Agent 圆点
+            ctx.fillStyle = agent.done ? 'rgba(76, 175, 80, 0.6)' : color;
+            ctx.beginPath();
+            ctx.arc(ax, ay, r, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Agent 边框
+            ctx.strokeStyle = agent.done ? '#4caf50' : '#fff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(ax, ay, r, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 方向箭头（action_id > 0 时绘制）
+            if (agent.action_id > 0 && agent.action_id <= 8) {
+                const dir = ACTION_DIRS[agent.action_id];
+                const arrowLen = r * 2.5;
+                // 注意 Y 轴翻转
+                const endX = ax + dir[0] * arrowLen;
+                const endY = ay - dir[1] * arrowLen;
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+
+                // 箭头头部
+                const headLen = r * 0.8;
+                const angle = Math.atan2(endY - ay, endX - ax);
+                ctx.beginPath();
+                ctx.moveTo(endX, endY);
+                ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
+                ctx.moveTo(endX, endY);
+                ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
+                ctx.stroke();
+            }
+
+            // Agent ID 标签
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${agent.id}`, ax, ay + 3);
+        }
+    }
+
+    // ---- 6. 坐标轴标注 ----
+    ctx.fillStyle = '#546e7a';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+
+    for (let x = 0; x <= mapW; x += gridStep) {
+        const [cx, cy] = toCanvas(x, 0);
+        ctx.fillText(`${x}`, cx, cy + 14);
+    }
+
+    ctx.textAlign = 'right';
+    for (let y = 0; y <= mapH; y += gridStep) {
+        const [cx, cy] = toCanvas(0, y);
+        ctx.fillText(`${y}`, cx - 6, cy + 4);
+    }
+}
+
+// 启动渲染循环
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# ============================================================================
+# AIServer - AI 决策服务 Docker 构建文件
+# 基础镜像：Ubuntu 24.04（与 Client 保持一致）
+# 用法：docker compose up maze-aiserver（推荐）
+# ============================================================================
+
+FROM ubuntu:24.04
+
+# --- 避免交互式安装提示 ---
+ENV DEBIAN_FRONTEND=noninteractive
+
+# --- 安装 C++ 工具链 + Protobuf + gRPC ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    protobuf-compiler \
+    libprotobuf-dev \
+    libgrpc++-dev \
+    protobuf-compiler-grpc \
+    libabsl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- 工作目录（进入容器即在 AIServer 目录）---
+WORKDIR /workspace/AIServer
+
+# --- 默认入口：编译并运行 AIServer ---
+CMD ["./build.sh"]

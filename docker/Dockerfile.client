@@ -1,0 +1,32 @@
+# ============================================================================
+# Client - 迷宫环境模拟器 Docker 构建文件
+# 基础镜像：Ubuntu 24.04（与 WSL 保持一致）
+# 用法：docker compose up maze-client（推荐）
+#       docker build -f docker/Dockerfile.client -t maze-client .（手动）
+# ============================================================================
+
+FROM ubuntu:24.04
+
+# --- 避免交互式安装提示 ---
+ENV DEBIAN_FRONTEND=noninteractive
+
+# --- 安装 C++ 工具链 + Protobuf + gRPC ---
+# 注意：Ubuntu 24.04 的 Protobuf 版本为 3.21.12（v3 系列），
+#       utf8_range 功能已内置于 libprotobuf，无需独立安装 libutf8-range-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    protobuf-compiler \
+    libprotobuf-dev \
+    libgrpc++-dev \
+    protobuf-compiler-grpc \
+    libabsl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- 工作目录（进入容器即在 Client 目录）---
+WORKDIR /workspace/Client
+
+# --- 默认入口：编译并运行 Client ---
+CMD ["./build.sh"]
