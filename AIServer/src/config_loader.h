@@ -11,9 +11,8 @@ struct ServerConfig {
 
 // ---- 策略参数 ----
 struct StrategyConfig {
-    std::string mode       = "astar";   // 策略模式：astar / random
-    int         grid_size  = 500;       // A* 网格大小 (cm)
-    int         replan_interval = 10;   // 重新规划间隔（帧）
+    int         grid_size  = 500;       // 网格大小 (cm)
+    int         replan_interval = 10;   // A* 模式下重新规划间隔（帧）
 };
 
 // ---- 模型参数 ----
@@ -21,6 +20,7 @@ struct ModelConfig {
     std::string local_dir     = "models/local";   // 本地模型目录（推理优先）
     std::string p2p_dir       = "models/p2p";     // P2P 模型目录（Learner 共享卷）
     int         poll_interval = 10;               // 模型轮询间隔（秒）
+    std::string save_name     = "SaveModel";      // 本地保存的模型文件名（不含扩展名）
 };
 
 // ---- Learner 连接参数 ----

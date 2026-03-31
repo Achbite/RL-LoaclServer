@@ -27,9 +27,11 @@ training:
 
 # --- 模型导出参数 ---
 model:
-  export_dir: "models"            # 模型导出目录（相对于 RL-Learner 根目录）
+  export_dir: "models/local"      # 模型导出目录（训练产出的模型存放位置）
+  p2p_dir: "models/p2p"           # P2P 模型目录（共享卷，AIServer 轮询拉取）
+  save_name: "SaveModel"          # 本地保存的模型文件名（不含扩展名）
   export_interval: 10             # 每训练 N 批次导出一次 ONNX 模型
-  obs_dim: 20                     # 观测向量维度
+  obs_dim: 5                      # 观测向量维度（当前简化版 5 维，后续扩展到 20 维）
   action_dim: 9                   # 动作空间维度
   hidden_dim: 64                  # 隐藏层维度
 

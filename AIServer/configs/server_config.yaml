@@ -8,19 +8,19 @@
 server:
   listen_port: 9002               # gRPC 监听端口，Client 通过此端口连接
   max_agents: 10                  # 最大支持的 Agent 数量
-  run_mode: 3                     # 运行模式：1=训练, 2=推理, 3=A*测试
+  run_mode: 1                     # 运行模式：1=训练, 2=推理, 3=A*测试（直接决定策略行为）
 
-# --- 策略参数（A* 测试模式）---
+# --- 网格参数（A* 测试 + 训练共用）---
 strategy:
-  mode: "astar"                   # 策略模式：astar=A*寻路测试, random=随机策略
-  grid_size: 500                  # A* 网格大小 (cm)，将连续坐标离散化为网格
-  replan_interval: 10             # 重新规划路径的帧间隔（0=仅初始规划一次）
+  grid_size: 500                  # 网格大小 (cm)，将连续坐标离散化为网格
+  replan_interval: 10             # A* 模式下重新规划路径的帧间隔（0=仅初始规划一次）
 
 # --- 模型参数 ---
 model:
-  local_dir: "models/local"       # 本地模型目录（推理模式优先使用）
+  local_dir: "models/local"       # 本地模型目录（推理模式优先使用，Learner 启动时加载）
   p2p_dir: "models/p2p"           # P2P 模型目录（从 Learner 共享卷同步）
   poll_interval: 10               # 模型轮询间隔（秒），训练模式下检查新模型
+  save_name: "SaveModel"          # 本地保存的模型文件名（不含扩展名）
 
 # --- 网络参数（AIServer → Learner 的 gRPC 通信配置）---
 learner:

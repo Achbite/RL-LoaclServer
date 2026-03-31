@@ -120,10 +120,6 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
     out_config.server.run_mode    = SafeInt(FindValue(entries, "server", "run_mode"),    3);
 
     // --- strategy ---
-    std::string mode = FindValue(entries, "strategy", "mode");
-    if (!mode.empty()) {
-        out_config.strategy.mode = mode;
-    }
     out_config.strategy.grid_size        = SafeInt(FindValue(entries, "strategy", "grid_size"),        500);
     out_config.strategy.replan_interval  = SafeInt(FindValue(entries, "strategy", "replan_interval"),  10);
 
@@ -137,6 +133,10 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
         out_config.model.p2p_dir = p2p_dir;
     }
     out_config.model.poll_interval = SafeInt(FindValue(entries, "model", "poll_interval"), 10);
+    std::string save_name = FindValue(entries, "model", "save_name");
+    if (!save_name.empty()) {
+        out_config.model.save_name = save_name;
+    }
 
     // --- learner ---
     std::string lhost = FindValue(entries, "learner", "host");
@@ -155,8 +155,7 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
     LOG_INFO("Config", "server: port=%d, max_agents=%d, run_mode=%d(%s)",
              out_config.server.listen_port, out_config.server.max_agents,
              out_config.server.run_mode, mode_name);
-    LOG_INFO("Config", "strategy: mode=%s, grid=%d, replan=%d",
-             out_config.strategy.mode.c_str(),
+    LOG_INFO("Config", "strategy: grid=%d, replan=%d",
              out_config.strategy.grid_size,
              out_config.strategy.replan_interval);
     LOG_INFO("Config", "model: local=%s, p2p=%s, poll=%ds",

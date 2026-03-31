@@ -20,6 +20,14 @@ static void SignalHandler(int sig) {
 // --- 默认配置文件路径 ---
 static const char* kDefaultConfigPath = "configs/server_config.yaml";
 
+// ---- 解析命令行参数 ----
+static bool HasFlag(int argc, char* argv[], const char* flag) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == flag) return true;
+    }
+    return false;
+}
+
 int main(int argc, char* argv[]) {
     std::printf("============================================\n");
     std::printf("  迷宫训练框架 - AIServer (Demo)\n");
@@ -35,9 +43,22 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, SignalHandler);
 
     // ---- 2. 加载配置 ----
-    const char* config_path = (argc > 1) ? argv[1] : kDefaultConfigPath;
+    // 查找第一个非 -- 开头的参数作为配置文件路径
+    const char* config_path = kDefaultConfigPath;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]).substr(0, 2) != "--") {
+            config_path = argv[i];
+            break;
+        }
+    }
     AIServerConfig cfg;
     LoadServerConfig(config_path, cfg);
+
+    // ---- 2a. 处理 --train 参数：强制训练模式 ----
+    if (HasFlag(argc, argv, "--train")) {
+        cfg.server.run_mode = 1;
+        LOG_INFO("Main", "--train 参数生效: run_mode=1(训练)");
+    }
 
     // ---- 3. 创建 gRPC 服务 ----
     MazeServiceImpl service(cfg);
@@ -56,7 +77,9 @@ int main(int argc, char* argv[]) {
     }
 
     LOG_INFO("Main", "AIServer 已启动，监听: %s", listen_addr.c_str());
-    LOG_INFO("Main", "策略模式: %s", cfg.strategy.mode.c_str());
+    LOG_INFO("Main", "运行模式: %d (%s)", cfg.server.run_mode,
+             cfg.server.run_mode == 1 ? "训练" :
+             cfg.server.run_mode == 2 ? "推理" : "A*测试");
     LOG_INFO("Main", "等待 Client 连接...");
 
     // ---- 4. 等待退出信号 ----

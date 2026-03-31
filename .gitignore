@@ -12,6 +12,7 @@ models/*.pth
 logs/*.log
 logs/*.csv
 AIServer/log/
+*.log
 
 # Python
 __pycache__/
