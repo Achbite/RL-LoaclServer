@@ -41,3 +41,11 @@ log:
   console_level: "INFO"           # 控制台日志级别（DEBUG / INFO / WARN / ERROR）
   file_level: "DEBUG"             # 文件日志级别
   log_dir: "logs"                 # 日志文件目录（相对于 RL-Learner 根目录）
+
+# --- 训练指标面板参数 ---
+dashboard:
+  enabled: true                   # 是否启用指标记录和面板服务
+  server_port: 9005               # 指标面板 HTTP 端口
+  metrics_dir: "logs/metrics"     # 指标数据目录（相对于 RL-Learner 根目录）
+  window_size: 100                # Episode 指标滑动窗口大小（计算平均奖励/通关率的窗口）
+  backend: "jsonl"                # 存储后端类型（当前支持 jsonl，未来可扩展 sqlite / influxdb）

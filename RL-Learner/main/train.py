@@ -25,6 +25,8 @@ from proto import maze_pb2_grpc
 from src.learner_service import LearnerServiceImpl
 from src.sample_buffer import SampleBuffer
 from src.logger import setup_logger
+from src.metrics_backend import create_backend
+from src.metrics_collector import MetricsCollector
 
 # --- 全局退出标志 ---
 _running = True
@@ -184,6 +186,7 @@ def main():
     server_cfg = config.get("server", {})
     buffer_cfg = config.get("buffer", {})
     log_cfg = config.get("log", {})
+    dashboard_cfg = config.get("dashboard", {})
 
     # ---- 1. 初始化日志 ----
     log_dir = log_cfg.get("log_dir", "logs")
@@ -221,7 +224,19 @@ def main():
     sample_buffer = SampleBuffer(warn_threshold=warn_threshold)
     logger.info("样本缓存已创建，无界队列（零丢弃），拥塞告警水位线: %d", warn_threshold)
 
-    # ---- 6. 启动 gRPC 服务 ----
+    # ---- 6. 初始化训练指标采集器 ----
+    metrics_collector = None
+    if dashboard_cfg.get("enabled", True):
+        metrics_dir = dashboard_cfg.get("metrics_dir", "logs/metrics")
+        backend_type = dashboard_cfg.get("backend", "jsonl")
+        window_size = dashboard_cfg.get("window_size", 100)
+        backend = create_backend(backend_type, metrics_dir)
+        metrics_collector = MetricsCollector(backend, window_size=window_size)
+        logger.info("训练指标采集器已启动，存储后端: %s，指标目录: %s", backend_type, metrics_dir)
+    else:
+        logger.info("训练指标采集器已禁用")
+
+    # ---- 7. 启动 gRPC 服务 ----
     listen_port = server_cfg.get("listen_port", 9003)
     max_workers = server_cfg.get("max_workers", 4)
     listen_addr = f"0.0.0.0:{listen_port}"
@@ -235,17 +250,33 @@ def main():
     logger.info("Learner gRPC 服务已启动，监听: %s", listen_addr)
     logger.info("等待 AIServer 发送样本...")
 
-    # ---- 7. 主循环（Phase 3A：接收样本并统计，训练逻辑为空）----
+    # ---- 8. 主循环（Phase 3A：接收样本并统计，训练逻辑为空）----
     consume_size = buffer_cfg.get("consume_batch_size", 256)
     consume_timeout = buffer_cfg.get("consume_timeout", 1.0)
     last_log_time = time.time()
+    train_step = 0
     try:
         while _running:
             # 条件变量等待：有样本时立即唤醒，无样本时阻塞等待（替代 sleep 轮询）
             consumed = sample_buffer.consume(consume_size, timeout=consume_timeout)
 
             if consumed:
-                logger.info("[训练占位] 消费 %d 个样本（未执行实际训练）", len(consumed))
+                train_step += 1
+                logger.info("[训练占位] 步骤 %d - 消费 %d 个样本（未执行实际训练）", train_step, len(consumed))
+
+                # 记录训练指标（Phase 3A：仅记录缓冲区系统指标，训练指标为占位零值）
+                if metrics_collector is not None:
+                    train_stats = {
+                        "policy_loss": 0.0,
+                        "value_loss": 0.0,
+                        "total_loss": 0.0,
+                        "entropy": 0.0,
+                        "clip_fraction": 0.0,
+                        "mean_advantage": 0.0,
+                        "learning_rate": 0.0,
+                        "model_version": 0,
+                    }
+                    metrics_collector.on_train_step(train_step, train_stats, sample_buffer.get_stats())
 
             # 定期打印缓存状态（每 5 秒）
             now = time.time()
@@ -260,7 +291,12 @@ def main():
     except KeyboardInterrupt:
         pass
 
-    # ---- 8. 训练结束汇总 ----
+    # ---- 9. 关闭指标采集器 ----
+    if metrics_collector is not None:
+        metrics_collector.close()
+        logger.info("训练指标采集器已关闭")
+
+    # ---- 10. 训练结束汇总 ----
     stats = sample_buffer.get_stats()
     logger.info("============================================")
     logger.info("  训练结束汇总")
@@ -276,7 +312,7 @@ def main():
                        stats["warn_count"], stats["warn_threshold"])
         logger.warning("  建议：增加 Learner 训练并行度 或 减少 AIServer 并行 Episode 数")
 
-    # ---- 9. 优雅退出 ----
+    # ---- 11. 优雅退出 ----
     logger.info("正在关闭 gRPC 服务...")
     grpc_server.stop(grace=5)
     logger.info("RL-Learner 已停止")

@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>迷宫训练框架 - 训练指标面板</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f1923;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header */
+.header {
+    background: linear-gradient(135deg, #1a2332 0%, #0d1b2a 100%);
+    border-bottom: 1px solid #2a3a4a;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.header h1 {
+    font-size: 18px;
+    color: #4fc3f7;
+    font-weight: 600;
+}
+.header h1 span { color: #ff9800; }
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot.connected { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-dot.disconnected { background: #f44336; box-shadow: 0 0 6px #f44336; }
+.status-text { font-size: 13px; color: #78909c; }
+.elapsed-time { font-size: 13px; color: #607d8b; }
+
+/* Main content */
+.main {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+}
+
+/* KPI 概览卡片区 */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+}
+.kpi-card {
+    background: #1a2332;
+    border: 1px solid #2a3a4a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.kpi-label {
+    font-size: 12px;
+    color: #607d8b;
+    font-weight: 500;
+}
+.kpi-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: #eceff1;
+    line-height: 1.2;
+}
+.kpi-trend {
+    font-size: 11px;
+    font-weight: 500;
+}
+.kpi-trend.up { color: #4caf50; }
+.kpi-trend.down { color: #f44336; }
+.kpi-trend.neutral { color: #607d8b; }
+
+/* 图表网格 */
+.chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    flex: 1;
+}
+@media (max-width: 900px) {
+    .chart-grid { grid-template-columns: 1fr; }
+}
+
+/* 图表卡片 */
+.card {
+    background: #1a2332;
+    border: 1px solid #2a3a4a;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.card-header {
+    padding: 10px 16px;
+    background: #1e2d3d;
+    border-bottom: 1px solid #2a3a4a;
+    font-size: 14px;
+    font-weight: 600;
+    color: #b0bec5;
+}
+.card-body {
+    padding: 12px;
+    flex: 1;
+    position: relative;
+    min-height: 220px;
+}
+
+/* 控制面板 */
+.control-bar {
+    background: #1a2332;
+    border: 1px solid #2a3a4a;
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+.control-group label { color: #78909c; }
+.control-group select,
+.control-group input[type="checkbox"] {
+    background: #0f1923;
+    border: 1px solid #2a3a4a;
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.btn-export, .btn-refresh {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-export {
+    background: #1a237e;
+    color: #9fa8da;
+}
+.btn-refresh {
+    background: #004d40;
+    color: #80cbc4;
+}
+.btn-refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-export:hover, .btn-refresh:hover:not(:disabled) { filter: brightness(1.3); }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🏗️ 迷宫训练框架 — <span>训练指标面板</span></h1>
+    <div class="header-right">
+        <span class="elapsed-time" id="elapsedTime">⏱ --:--:--</span>
+        <span class="status-dot disconnected" id="statusDot"></span>
+        <span class="status-text" id="statusText">未连接</span>
+    </div>
+</div>
+
+<div class="main">
+    <!-- KPI 概览 -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <span class="kpi-label">📊 训练步数</span>
+            <span class="kpi-value" id="kpiStep">--</span>
+            <span class="kpi-trend neutral" id="kpiStepTrend">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">🎮 Episode 数</span>
+            <span class="kpi-value" id="kpiEpisode">--</span>
+            <span class="kpi-trend neutral" id="kpiEpisodeTrend">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">🎯 通关率</span>
+            <span class="kpi-value" id="kpiPassRate">--</span>
+            <span class="kpi-trend neutral" id="kpiPassRateTrend">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">🏆 模型版本</span>
+            <span class="kpi-value" id="kpiModelVer">--</span>
+            <span class="kpi-trend neutral">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">📉 总损失</span>
+            <span class="kpi-value" id="kpiLoss">--</span>
+            <span class="kpi-trend neutral" id="kpiLossTrend">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">💰 平均奖励</span>
+            <span class="kpi-value" id="kpiReward">--</span>
+            <span class="kpi-trend neutral" id="kpiRewardTrend">--</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">⚡ 样本吞吐</span>
+            <span class="kpi-value" id="kpiThroughput">--</span>
+            <span class="kpi-trend neutral">samples/s</span>
+        </div>
+        <div class="kpi-card">
+            <span class="kpi-label">📦 缓冲区</span>
+            <span class="kpi-value" id="kpiBuffer">--</span>
+            <span class="kpi-trend neutral" id="kpiBufferTrend">--</span>
+        </div>
+    </div>
+
+    <!-- 图表区 -->
+    <div class="chart-grid">
+        <div class="card">
+            <div class="card-header">📈 奖励曲线</div>
+            <div class="card-body"><canvas id="chartReward"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header">📉 Loss 曲线</div>
+            <div class="card-body"><canvas id="chartLoss"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header">🎯 通关率 & Episode 长度</div>
+            <div class="card-body"><canvas id="chartPassRate"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header">🎲 策略熵 & Clip 比例</div>
+            <div class="card-body"><canvas id="chartEntropy"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header">📦 缓冲区 & 吞吐</div>
+            <div class="card-body"><canvas id="chartBuffer"></canvas></div>
+        </div>
+        <div class="card">
+            <div class="card-header">🔧 学习率 & 优势值</div>
+            <div class="card-body"><canvas id="chartParams"></canvas></div>
+        </div>
+    </div>
+
+    <!-- 控制面板 -->
+    <div class="control-bar">
+        <div class="control-group">
+            <label>自动刷新:</label>
+            <input type="checkbox" id="autoRefresh" checked>
+            <select id="refreshInterval">
+                <option value="1000">1s</option>
+                <option value="3000" selected>3s</option>
+                <option value="5000">5s</option>
+                <option value="10000">10s</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>平滑窗口:</label>
+            <select id="smoothWindow">
+                <option value="1">无平滑</option>
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>时间范围:</label>
+            <select id="timeRange">
+                <option value="0" selected>全部</option>
+                <option value="100">最近 100 步</option>
+                <option value="500">最近 500 步</option>
+                <option value="1000">最近 1000 步</option>
+                <option value="5000">最近 5000 步</option>
+            </select>
+        </div>
+        <button class="btn-refresh" id="btnRefresh" onclick="manualRefresh()">🔄 手动刷新</button>
+        <button class="btn-export" onclick="exportCSV()">📥 导出 CSV</button>
+    </div>
+</div>
+
+<!-- Chart.js CDN（内联 fallback 提示） -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+// ============================================================================
+// 全局状态
+// ============================================================================
+let allRecords = [];        // 全部指标记录
+let lastStep = 0;           // 上次拉取的最大 train_step
+let isConnected = false;
+let refreshTimer = null;
+let charts = {};            // Chart.js 实例
+
+// 图表配色
+const COLORS = {
+    blue:   '#4fc3f7',
+    orange: '#ff9800',
+    red:    '#e91e63',
+    green:  '#4caf50',
+    purple: '#9c27b0',
+    cyan:   '#00bcd4',
+    lime:   '#8bc34a',
+    grey:   '#607d8b',
+};
+
+// Chart.js 全局配置
+const CHART_DEFAULTS = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 0 },
+    plugins: {
+        legend: {
+            labels: { color: '#b0bec5', font: { size: 11 } }
+        }
+    },
+    scales: {
+        x: {
+            ticks: { color: '#607d8b', font: { size: 10 }, maxTicksLimit: 10 },
+            grid: { color: '#1e2d3d' },
+        },
+        y: {
+            ticks: { color: '#607d8b', font: { size: 10 } },
+            grid: { color: '#1e2d3d' },
+        }
+    }
+};
+
+// ============================================================================
+// 服务器通信
+// ============================================================================
+function getApiBase() { return window.location.origin; }
+
+async function checkConnection() {
+    try {
+        const resp = await fetch(getApiBase() + '/api/status', { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) { setConnected(true); return true; }
+    } catch (e) {}
+    setConnected(false);
+    return false;
+}
+
+function setConnected(connected) {
+    isConnected = connected;
+    document.getElementById('statusDot').className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
+    document.getElementById('statusText').textContent = connected ? '已连接' : '未连接';
+}
+
+// ---- 增量拉取指标数据 ----
+async function fetchMetrics() {
+    if (!isConnected) {
+        await checkConnection();
+        if (!isConnected) return;
+    }
+
+    try {
+        const resp = await fetch(getApiBase() + `/api/metrics?since=${lastStep}`, {
+            signal: AbortSignal.timeout(5000)
+        });
+        if (!resp.ok) { setConnected(false); return; }
+        setConnected(true);
+
+        const data = await resp.json();
+        if (data.records && data.records.length > 0) {
+            allRecords = allRecords.concat(data.records);
+            lastStep = Math.max(...data.records.map(r => r.train_step || 0));
+            updateDashboard();
+        }
+    } catch (e) {
+        setConnected(false);
+    }
+}
+
+// ============================================================================
+// 数据处理
+// ============================================================================
+
+// ---- 滑动平均平滑 ----
+function smooth(data, windowSize) {
+    if (windowSize <= 1) return data;
+    const result = [];
+    for (let i = 0; i < data.length; i++) {
+        const start = Math.max(0, i - windowSize + 1);
+        const window = data.slice(start, i + 1);
+        result.push(window.reduce((a, b) => a + b, 0) / window.length);
+    }
+    return result;
+}
+
+// ---- LTTB 降采样 ----
+function downsample(data, maxPoints) {
+    if (data.length <= maxPoints) return data;
+    const every = (data.length - 2) / (maxPoints - 2);
+    const sampled = [data[0]];
+    for (let i = 1; i < maxPoints - 1; i++) {
+        const avgStart = Math.floor((i - 1) * every) + 1;
+        const avgEnd = Math.min(Math.floor(i * every) + 1, data.length);
+        let maxArea = -1, maxIdx = avgStart;
+        const prev = sampled[sampled.length - 1];
+        for (let j = avgStart; j < avgEnd; j++) {
+            const area = Math.abs((data[j].x - prev.x) * (data[avgEnd] ? data[avgEnd].y : data[data.length-1].y) -
+                                  (data[j].y - prev.y) * ((data[avgEnd] ? data[avgEnd].x : data[data.length-1].x) - prev.x));
+            if (area > maxArea) { maxArea = area; maxIdx = j; }
+        }
+        sampled.push(data[maxIdx]);
+    }
+    sampled.push(data[data.length - 1]);
+    return sampled;
+}
+
+// ---- 获取显示范围内的记录 ----
+function getVisibleRecords() {
+    const range = parseInt(document.getElementById('timeRange').value);
+    if (range === 0) return allRecords;
+    return allRecords.slice(-range);
+}
+
+// ============================================================================
+// 更新面板
+// ============================================================================
+function updateDashboard() {
+    const records = getVisibleRecords();
+    if (records.length === 0) return;
+
+    const latest = records[records.length - 1];
+    const prev = records.length > 1 ? records[records.length - 2] : latest;
+
+    // ---- 更新 KPI 卡片 ----
+    updateKPI('kpiStep', latest.train_step, null, 'kpiStepTrend', latest.train_step - prev.train_step);
+    updateKPI('kpiEpisode', latest.episode_count, null, 'kpiEpisodeTrend', latest.episode_count - prev.episode_count);
+    updateKPI('kpiPassRate', (latest.pass_rate * 100).toFixed(1) + '%', null, 'kpiPassRateTrend',
+              ((latest.pass_rate - prev.pass_rate) * 100).toFixed(1) + '%');
+    updateKPI('kpiModelVer', 'v' + latest.model_version);
+    updateKPI('kpiLoss', latest.total_loss.toFixed(4), null, 'kpiLossTrend',
+              (latest.total_loss - prev.total_loss).toFixed(4), true);
+    updateKPI('kpiReward', latest.mean_episode_reward.toFixed(2), null, 'kpiRewardTrend',
+              (latest.mean_episode_reward - prev.mean_episode_reward).toFixed(2));
+    updateKPI('kpiThroughput', latest.samples_per_sec.toFixed(0));
+    updateKPI('kpiBuffer', latest.buffer_size, null, 'kpiBufferTrend',
+              '峰值: ' + latest.buffer_peak);
+
+    // ---- 更新运行时长 ----
+    const elapsed = latest.elapsed || 0;
+    const h = Math.floor(elapsed / 3600);
+    const m = Math.floor((elapsed % 3600) / 60);
+    const s = Math.floor(elapsed % 60);
+    document.getElementById('elapsedTime').textContent =
+        `⏱ ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+    // ---- 更新图表 ----
+    const windowSize = parseInt(document.getElementById('smoothWindow').value);
+    const steps = records.map(r => r.train_step);
+
+    updateChart('chartReward', steps, [
+        { label: '平均 Episode 奖励', data: smooth(records.map(r => r.mean_episode_reward), windowSize), color: COLORS.blue },
+    ]);
+
+    updateChart('chartLoss', steps, [
+        { label: '策略损失', data: smooth(records.map(r => r.policy_loss), windowSize), color: COLORS.blue },
+        { label: '价值损失', data: smooth(records.map(r => r.value_loss), windowSize), color: COLORS.orange },
+        { label: '总损失', data: smooth(records.map(r => r.total_loss), windowSize), color: COLORS.red },
+    ]);
+
+    updateChart('chartPassRate', steps, [
+        { label: '通关率', data: smooth(records.map(r => r.pass_rate * 100), windowSize), color: COLORS.green, fill: true },
+        { label: 'Episode 长度', data: smooth(records.map(r => r.mean_episode_length), windowSize), color: COLORS.blue, yAxisID: 'y1' },
+    ], true);
+
+    updateChart('chartEntropy', steps, [
+        { label: '策略熵', data: smooth(records.map(r => r.entropy), windowSize), color: COLORS.green },
+        { label: 'Clip 比例', data: smooth(records.map(r => r.clip_fraction), windowSize), color: COLORS.purple },
+    ]);
+
+    updateChart('chartBuffer', steps, [
+        { label: '缓冲区大小', data: records.map(r => r.buffer_size), color: COLORS.cyan, fill: true },
+        { label: '样本吞吐 (s/s)', data: records.map(r => r.samples_per_sec), color: COLORS.lime, yAxisID: 'y1' },
+    ], true);
+
+    updateChart('chartParams', steps, [
+        { label: '学习率', data: records.map(r => r.learning_rate), color: COLORS.blue },
+        { label: '平均优势值', data: smooth(records.map(r => r.mean_advantage), windowSize), color: COLORS.orange, yAxisID: 'y1' },
+    ], true);
+}
+
+// ---- 更新单个 KPI 卡片 ----
+function updateKPI(valueId, value, unit, trendId, delta, inverseTrend) {
+    document.getElementById(valueId).textContent = value;
+    if (trendId && delta !== undefined) {
+        const el = document.getElementById(trendId);
+        const numDelta = parseFloat(delta);
+        if (isNaN(numDelta)) {
+            el.textContent = delta;
+            el.className = 'kpi-trend neutral';
+        } else {
+            const isPositive = inverseTrend ? numDelta < 0 : numDelta > 0;
+            const isNeg = inverseTrend ? numDelta > 0 : numDelta < 0;
+            el.textContent = (numDelta >= 0 ? '▲ +' : '▼ ') + delta;
+            el.className = 'kpi-trend ' + (isPositive ? 'up' : isNeg ? 'down' : 'neutral');
+        }
+    }
+}
+
+// ---- 创建或更新图表 ----
+function updateChart(canvasId, labels, datasets, dualAxis) {
+    const maxPoints = 2000;
+
+    if (!charts[canvasId]) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        const config = {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+        };
+
+        if (dualAxis) {
+            config.options.scales.y1 = {
+                position: 'right',
+                ticks: { color: '#607d8b', font: { size: 10 } },
+                grid: { drawOnChartArea: false },
+            };
+        }
+
+        charts[canvasId] = new Chart(ctx, config);
+    }
+
+    const chart = charts[canvasId];
+
+    // 降采样
+    let displayLabels = labels;
+    let displayDatasets = datasets;
+    if (labels.length > maxPoints) {
+        const indices = [];
+        const step = labels.length / maxPoints;
+        for (let i = 0; i < maxPoints; i++) {
+            indices.push(Math.floor(i * step));
+        }
+        indices.push(labels.length - 1);
+        displayLabels = indices.map(i => labels[i]);
+        displayDatasets = datasets.map(ds => ({
+            ...ds,
+            data: indices.map(i => ds.data[i]),
+        }));
+    }
+
+    chart.data.labels = displayLabels;
+    chart.data.datasets = displayDatasets.map(ds => ({
+        label: ds.label,
+        data: ds.data,
+        borderColor: ds.color,
+        backgroundColor: ds.fill ? ds.color + '20' : 'transparent',
+        fill: ds.fill || false,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+        yAxisID: ds.yAxisID || 'y',
+    }));
+
+    chart.update('none');
+}
+
+// ============================================================================
+// 控制面板
+// ============================================================================
+
+// ---- 自动刷新控制 ----
+function setupAutoRefresh() {
+    if (refreshTimer) clearInterval(refreshTimer);
+    const enabled = document.getElementById('autoRefresh').checked;
+    const interval = parseInt(document.getElementById('refreshInterval').value);
+    if (enabled) {
+        refreshTimer = setInterval(fetchMetrics, interval);
+    }
+}
+
+document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
+document.getElementById('refreshInterval').addEventListener('change', setupAutoRefresh);
+
+// ---- 手动刷新 ----
+async function manualRefresh() {
+    const btn = document.getElementById('btnRefresh');
+    btn.disabled = true;
+    btn.textContent = '⏳ 刷新中...';
+    try {
+        await fetchMetrics();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 手动刷新';
+    }
+}
+
+// ---- 平滑窗口和时间范围变化时重绘 ----
+document.getElementById('smoothWindow').addEventListener('change', updateDashboard);
+document.getElementById('timeRange').addEventListener('change', updateDashboard);
+
+// ---- 导出 CSV ----
+function exportCSV() {
+    if (allRecords.length === 0) { alert('暂无数据可导出'); return; }
+
+    const headers = Object.keys(allRecords[0]);
+    const rows = allRecords.map(r => headers.map(h => r[h] !== undefined ? r[h] : ''));
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `training_metrics_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ============================================================================
+// 初始化
+// ============================================================================
+(async function init() {
+    // 检查 Chart.js 是否加载成功
+    if (typeof Chart === 'undefined') {
+        document.querySelector('.main').innerHTML =
+            '<div style="text-align:center;padding:60px;color:#f44336;font-size:16px;">' +
+            '⚠️ Chart.js 加载失败（需要网络访问 CDN）<br><br>' +
+            '<span style="color:#78909c;font-size:13px;">请确保容器可以访问外网，或将 Chart.js 文件放置到本地</span></div>';
+        return;
+    }
+
+    const connected = await checkConnection();
+    if (connected) {
+        await fetchMetrics();
+    }
+
+    setupAutoRefresh();
+})();
+</script>
+</body>
+</html>

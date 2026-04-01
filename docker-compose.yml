@@ -70,6 +70,7 @@ services:
       - maze-net
     ports:
       - "9003:9003"                     # Learner gRPC 端口
+      - "9005:9005"                     # 训练指标面板端口
     stdin_open: true
     tty: true
     command: ["bash", "-c", "echo 'Learner 容器已就绪' && sleep infinity"]
