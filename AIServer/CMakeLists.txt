@@ -17,9 +17,11 @@ pkg_check_modules(GRPC REQUIRED grpc++)
 set(SOURCES
     main/main.cpp
     src/maze_service.cpp
+    src/maze_reward.cpp
     src/astar_solver.cpp
     src/config_loader.cpp
     src/session_manager.cpp
+    src/onnx_inferencer.cpp
 )
 
 # --- Proto 生成文件（由 gen_proto.sh 预先生成）---
@@ -38,6 +40,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${PROTO_GEN_DIR}
     ${Protobuf_INCLUDE_DIRS}
     ${GRPC_INCLUDE_DIRS}
+    /usr/local/include/onnxruntime      # ONNX Runtime 头文件
 )
 
 # --- 链接库 ---
@@ -45,4 +48,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     protobuf::libprotobuf
     ${GRPC_LIBRARIES}
     pthread
+    onnxruntime                          # ONNX Runtime 推理库
 )

@@ -96,6 +96,8 @@ message Sample {
     float          advantage    = 6; // GAE 优势值
     float          td_return    = 7; // TD(λ) 回报
     float          mask         = 8; // 1.0=有效样本, 0.0=填充
+
+    map<string, float> reward_details = 9; // 奖励分项明细（key=奖励名, value=值），仅用于监控可视化
 }
 
 // ---- 样本批次 ----

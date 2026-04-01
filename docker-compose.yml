@@ -53,6 +53,8 @@ services:
     working_dir: /workspace/TrainClient
     networks:
       - maze-net
+    ports:
+      - "9004:9004"                     # 可视化 HTTP 服务端口
     stdin_open: true
     tty: true
 

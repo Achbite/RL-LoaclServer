@@ -4,10 +4,12 @@
 #include "config_loader.h"
 #include "thread_pool.h"
 #include "episode_pool.h"
+#include "viz_recorder.h"
 #include "logger.h"
 
 #include <cmath>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <atomic>
 #include <mutex>
@@ -22,6 +24,52 @@ static std::atomic<int> g_passed_episodes{0};       // 通关 Episode 数
 static std::atomic<int> g_total_frames{0};          // 总帧数
 static std::mutex       g_log_mutex;                // 日志互斥锁
 
+// ---- 构建可视化 JSON 数据 ----
+static std::string BuildVizJson(const MazeEnv& env, const ClientConfig& cfg,
+                                int frame_id, int episode_id,
+                                const std::vector<int>& actions) {
+    std::ostringstream ss;
+    ss << "{";
+
+    // 帧信息
+    ss << "\"type\":\"frame_update\",";
+    ss << "\"frame_id\":" << frame_id << ",";
+    ss << "\"episode_id\":" << episode_id << ",";
+
+    // 地图信息
+    ss << "\"map\":{";
+    ss << "\"width\":" << cfg.env.map_width << ",";
+    ss << "\"height\":" << cfg.env.map_height << ",";
+    ss << "\"start_pos\":{\"x\":" << cfg.env.start_x << ",\"y\":" << cfg.env.start_y << "},";
+    ss << "\"end_pos\":{\"x\":" << cfg.env.end_x << ",\"y\":" << cfg.env.end_y << "},";
+
+    // 墙壁（内部隔墙，不含外围边界）
+    ss << "\"walls\":[";
+    ss << "{\"x1\":5000,\"y1\":0,\"x2\":5000,\"y2\":14000,\"thickness\":100},";
+    ss << "{\"x1\":10000,\"y1\":6000,\"x2\":10000,\"y2\":20000,\"thickness\":100},";
+    ss << "{\"x1\":15000,\"y1\":0,\"x2\":15000,\"y2\":14000,\"thickness\":100}";
+    ss << "]},";
+
+    // Agent 列表（网格坐标转换为连续坐标用于可视化）
+    ss << "\"agents\":[";
+    for (int i = 0; i < env.GetAgentNum(); ++i) {
+        const AgentInfo& a = env.GetAgent(i);
+        float world_x = env.GetWorldX(a.grid_x);
+        float world_y = env.GetWorldY(a.grid_y);
+        if (i > 0) ss << ",";
+        ss << "{\"id\":" << a.id
+           << ",\"x\":" << world_x
+           << ",\"y\":" << world_y
+           << ",\"done\":" << (a.done ? "true" : "false")
+           << ",\"action_id\":" << (i < static_cast<int>(actions.size()) ? actions[i] : 0)
+           << "}";
+    }
+    ss << "]";
+
+    ss << "}";
+    return ss.str();
+}
+
 // ---- 运行单个 Episode（在线程池中执行）----
 static void RunEpisode(EpisodeWorker* worker, int episode_id,
                        const ClientConfig& cfg) {
@@ -32,6 +80,15 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
     env.Reset();
 
     LOG_FILE("Train", "W:%d S:%d EP:%d 开始", worker->worker_id, session_id, episode_id);
+
+    // ---- 初始化帧数据记录器（每个 Episode 独立实例，线程安全）----
+    VizRecorder viz_recorder;
+    if (cfg.viz.enabled) {
+        viz_recorder.Begin(cfg.viz.output_dir, episode_id);
+    }
+
+    // 每帧记录各 Agent 的动作（用于可视化）
+    std::vector<int> last_actions(cfg.run.agent_num, 0);
 
     // ---- 发送 InitReq（每个 Episode 重新初始化会话）----
     {
@@ -85,17 +142,38 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
         // 执行动作
         for (int i = 0; i < update_rsp.actions_size(); ++i) {
             const auto& action = update_rsp.actions(i);
-            env.Step(action.agent_id(), action.action_id());
+            int aid = action.agent_id();
+            int act = action.action_id();
+            env.Step(aid, act);
+
+            // 记录动作用于可视化
+            if (aid >= 0 && aid < static_cast<int>(last_actions.size())) {
+                last_actions[aid] = act;
+            }
         }
 
         env.AdvanceFrame();
+
+        // ---- 记录帧数据（切片记录，用于离线回放）----
+        if (cfg.viz.enabled && env.GetFrameId() % cfg.viz.interval == 0) {
+            std::string json = BuildVizJson(env, cfg, env.GetFrameId(), episode_id, last_actions);
+            viz_recorder.RecordFrame(json);
+        }
     }
 
-    // ---- Episode 结束 ----
+    // ---- Episode 结束：多 Agent 通关统计 ----
+    viz_recorder.End();
+
     int frames = env.GetFrameId();
-    const AgentInfo& a = env.GetAgent(0);
-    bool passed = (a.grid_x == env.ToGridX(cfg.env.end_x) &&
-                   a.grid_y == env.ToGridY(cfg.env.end_y));
+    int agent_passed_count = 0;
+    for (int i = 0; i < env.GetAgentNum(); ++i) {
+        const AgentInfo& a = env.GetAgent(i);
+        if (a.grid_x == env.ToGridX(cfg.env.end_x) &&
+            a.grid_y == env.ToGridY(cfg.env.end_y)) {
+            agent_passed_count++;
+        }
+    }
+    bool passed = (agent_passed_count > 0);  // 任一 Agent 通关即计为通关
 
     // 发送 EpisodeEndReq
     {
@@ -116,8 +194,9 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
         g_passed_episodes.fetch_add(1);
     }
 
-    LOG_FILE("Train", "W:%d S:%d EP:%d 结束 | 帧数:%d | %s",
+    LOG_FILE("Train", "W:%d S:%d EP:%d 结束 | 帧数:%d | 通关Agent:%d/%d | %s",
              worker->worker_id, session_id, episode_id, frames,
+             agent_passed_count, env.GetAgentNum(),
              passed ? "通关" : "超时");
 }
 

@@ -59,6 +59,7 @@ void MazeEnv::Reset() {
         agent.done   = false;
     }
     frame_id_ = 0;
+    first_done_frame_ = -1;
 }
 
 // ---- 执行网格级移动 ----
@@ -116,11 +117,22 @@ void MazeEnv::Step(int agent_id, int action_id) {
     // ---- 4. 终止判定 ----
     if (CheckGoalReached(agent)) {
         agent.done = true;
+        // 记录首个 Agent 完成的帧号（启动倒计时）
+        if (first_done_frame_ < 0) {
+            first_done_frame_ = frame_id_;
+            LOG_INFO("MazeEnv", "Agent %d 首个通关! frame=%d 启动%d帧倒计时",
+                        agent_id, frame_id_, kCountdownFrames);
+        }
         LOG_INFO("MazeEnv", "Agent %d 到达终点! frame=%d grid=(%d,%d)",
                     agent_id, frame_id_, agent.grid_x, agent.grid_y);
     } else if (CheckTimeout()) {
         agent.done = true;
         LOG_INFO("MazeEnv", "Agent %d 超时! frame=%d grid=(%d,%d)",
+                    agent_id, frame_id_, agent.grid_x, agent.grid_y);
+    } else if (CheckCountdownExpired()) {
+        // 倒计时到期，强制结束未完成的 Agent
+        agent.done = true;
+        LOG_INFO("MazeEnv", "Agent %d 倒计时结束! frame=%d grid=(%d,%d)",
                     agent_id, frame_id_, agent.grid_x, agent.grid_y);
     }
 }
@@ -146,6 +158,19 @@ bool MazeEnv::AllDone() const {
         if (!agent.done) return false;
     }
     return true;
+}
+
+// ---- 是否有任一 Agent 已结束 ----
+bool MazeEnv::HasAnyDone() const {
+    for (const auto& agent : agents_) {
+        if (agent.done) return true;
+    }
+    return false;
+}
+
+// ---- 获取首个 Agent 完成时的帧号 ----
+int MazeEnv::GetFirstDoneFrame() const {
+    return first_done_frame_;
 }
 
 // ---- Agent 数量 ----
@@ -181,6 +206,12 @@ bool MazeEnv::CheckGoalReached(const AgentInfo& agent) const {
 // ---- 是否超时 ----
 bool MazeEnv::CheckTimeout() const {
     return frame_id_ >= max_steps_;
+}
+
+// ---- 是否倒计时到期（首个 Agent 通关后 N 帧）----
+bool MazeEnv::CheckCountdownExpired() const {
+    if (first_done_frame_ < 0) return false;
+    return (frame_id_ - first_done_frame_) >= kCountdownFrames;
 }
 
 // ---- 加载墙壁到网格 ----

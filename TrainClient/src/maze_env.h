@@ -46,7 +46,9 @@ public:
     const AgentInfo& GetAgent(int agent_id) const;        // 获取 Agent 状态
     int   GetFrameId() const;                             // 当前帧号
     bool  AllDone() const;                                // 所有 Agent 是否都已结束
-    int   GetAgentNum() const;                            // Agent 数量
+    bool  HasAnyDone() const;                              // 是否有任一 Agent 已结束
+    int   GetFirstDoneFrame() const;                       // 获取首个 Agent 完成时的帧号（-1 表示无）
+    int   GetAgentNum() const;                             // Agent 数量
 
     // 地图参数
     float GetMapWidth()  const { return map_width_; }
@@ -76,7 +78,7 @@ private:
     // --- 地图参数（从配置加载）---
     float map_width_      = 20000.0f;   // 地图宽度 (cm)
     float map_height_     = 20000.0f;   // 地图高度 (cm)
-    int   max_steps_      = 2000;       // 最大步数
+    int   max_steps_      = 10000;      // 最大步数
     float start_x_        = 500.0f;     // 起点 X（连续坐标）
     float start_y_        = 500.0f;     // 起点 Y（连续坐标）
     float end_x_          = 19500.0f;   // 终点 X（连续坐标）
@@ -92,6 +94,10 @@ private:
     int   end_gx_         = 0;          // 终点网格 X
     int   end_gy_         = 0;          // 终点网格 Y
 
+    // 竞争倒计时机制
+    int   first_done_frame_ = -1;       // 首个 Agent 完成时的帧号（-1 表示尚无）
+    static constexpr int kCountdownFrames = 100;  // 首通关后倒计时帧数
+
     // --- 网格障碍物（true=不可通行）---
     std::vector<bool> blocked_;
 
@@ -104,4 +110,5 @@ private:
     // 终止判定
     bool CheckGoalReached(const AgentInfo& agent) const;  // 是否到达终点网格
     bool CheckTimeout() const;                             // 是否超时
+    bool CheckCountdownExpired() const;                    // 首通关后倒计时是否到期
 };

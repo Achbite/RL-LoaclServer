@@ -22,6 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# --- 安装 ONNX Runtime 1.17（CPU 预编译库，用于模型推理）---
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && \
+    wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-1.17.0.tgz && \
+    tar xzf onnxruntime-linux-x64-1.17.0.tgz && \
+    cp onnxruntime-linux-x64-1.17.0/lib/* /usr/local/lib/ && \
+    cp -r onnxruntime-linux-x64-1.17.0/include/* /usr/local/include/ && \
+    ldconfig && \
+    rm -rf onnxruntime-linux-x64-1.17.0* && \
+    apt-get purge -y wget && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
 # --- 工作目录（进入容器即在 AIServer 目录）---
 WORKDIR /workspace/AIServer
 

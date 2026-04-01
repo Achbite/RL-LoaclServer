@@ -1,7 +1,7 @@
 """
 RL-Learner 训练主入口
-启动 gRPC 服务接收 AIServer 样本，后台运行训练循环（Phase 3B 实现）
-支持 --model_path 指定本地模型加载路径，无参数则自动生成空模型
+启动 gRPC 服务接收 AIServer 样本，运行 PPO 训练循环
+支持 --model_path 指定本地 checkpoint 加载路径，无参数则自动生成空模型
 """
 
 import argparse
@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from proto import maze_pb2_grpc
 from src.learner_service import LearnerServiceImpl
 from src.sample_buffer import SampleBuffer
+from src.ppo_trainer import PPOTrainer
 from src.logger import setup_logger
 from src.metrics_backend import create_backend
 from src.metrics_collector import MetricsCollector
@@ -63,112 +64,45 @@ def clean_model_cache(config: dict, logger):
     else:
         logger.info("P2P 模型目录无缓存文件: %s", p2p_dir)
 
-# ---- 构建 Actor-Critic 网络（空模型，随机权重）----
-def build_actor_critic(obs_dim: int, action_dim: int, hidden_dim: int):
-    """构建简单的 Actor-Critic 网络"""
-    class SimpleActorCritic(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            # Policy 分支
-            self.policy_encoder = torch.nn.Sequential(
-                torch.nn.Linear(obs_dim, hidden_dim),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim, hidden_dim),
-                torch.nn.ReLU(),
-            )
-            self.policy_head = torch.nn.Linear(hidden_dim, action_dim)
-
-            # Value 分支
-            self.value_encoder = torch.nn.Sequential(
-                torch.nn.Linear(obs_dim, hidden_dim),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim, hidden_dim),
-                torch.nn.ReLU(),
-            )
-            self.value_head = torch.nn.Linear(hidden_dim, 1)
-
-        def forward(self, obs):
-            # Policy
-            p = self.policy_encoder(obs)
-            action_probs = torch.softmax(self.policy_head(p), dim=-1)
-            # Value
-            v = self.value_encoder(obs)
-            value = self.value_head(v)
-            return action_probs, value
-
-    return SimpleActorCritic()
-
-# ---- 导出 ONNX 模型 ----
-def export_onnx_model(model, obs_dim: int, export_path: str, logger):
-    """将 PyTorch 模型导出为 ONNX 格式（兼容 PyTorch 2.6+ 新版导出器）"""
-    model.eval()
-    dummy_input = torch.randn(1, obs_dim)
-
-    export_kwargs = dict(
-        input_names=["obs"],
-        output_names=["action_probs", "value"],
-        dynamic_axes={
-            "obs": {0: "batch"},
-            "action_probs": {0: "batch"},
-            "value": {0: "batch"},
-        },
-        opset_version=11,
-    )
-
-    # PyTorch 2.6+ 默认走 dynamo 导出路径（依赖 onnxscript），
-    # 简单网络使用 TorchScript 导出即可，通过 dynamo=False 回退
-    try:
-        torch.onnx.export(model, dummy_input, export_path, dynamo=False, **export_kwargs)
-    except TypeError:
-        # PyTorch < 2.6 不支持 dynamo 参数，直接调用旧版 API
-        torch.onnx.export(model, dummy_input, export_path, **export_kwargs)
-
-    logger.info("ONNX 模型已导出: %s", export_path)
-
-# ---- 初始化模型（加载或生成空模型）----
-def init_model(config: dict, model_path: str, logger):
+# ---- 初始化 PPOTrainer（统一模型管理）----
+def init_trainer(config: dict, model_path: str, logger) -> PPOTrainer:
     """
-    初始化模型：
-    - 若指定 model_path 且文件存在，复制到 local 目录并加载
-    - 否则生成空模型（随机权重）并导出到 local 目录和 P2P 目录
+    初始化 PPOTrainer 并导出初始 ONNX 模型
+
+    Args:
+        config: 完整配置字典
+        model_path: 本地 checkpoint 路径（为空则使用随机权重）
+        logger: 日志实例
+    Returns:
+        PPOTrainer 实例
     """
     model_cfg = config.get("model", {})
     export_dir = model_cfg.get("export_dir", "models/local")
     p2p_dir = model_cfg.get("p2p_dir", "models/p2p")
     save_name = model_cfg.get("save_name", "SaveModel")
-    obs_dim = model_cfg.get("obs_dim", 5)
-    action_dim = model_cfg.get("action_dim", 9)
-    hidden_dim = model_cfg.get("hidden_dim", 64)
 
     os.makedirs(export_dir, exist_ok=True)
     os.makedirs(p2p_dir, exist_ok=True)
 
+    # 构建 PPOTrainer（内部创建 ActorCritic 网络 + Adam 优化器）
+    trainer = PPOTrainer(config)
+
+    # 加载 checkpoint（如果指定了路径）
+    if model_path and os.path.isfile(model_path):
+        logger.info("加载 checkpoint: %s", model_path)
+        trainer.load_checkpoint(model_path)
+    elif model_path:
+        logger.warning("指定的 checkpoint 路径不存在: %s，使用随机权重", model_path)
+
+    # 导出初始 ONNX 模型到 local 和 P2P 目录
     local_onnx_path = os.path.join(export_dir, f"{save_name}.onnx")
     p2p_onnx_path = os.path.join(p2p_dir, f"{save_name}.onnx")
 
-    if model_path and os.path.isfile(model_path):
-        # 从指定路径加载模型
-        logger.info("加载本地模型: %s", model_path)
-        shutil.copy2(model_path, local_onnx_path)
-        shutil.copy2(model_path, p2p_onnx_path)
-        logger.info("模型已复制到: %s, %s", local_onnx_path, p2p_onnx_path)
-        return local_onnx_path
-    else:
-        if model_path:
-            logger.warning("指定的模型路径不存在: %s，将生成空模型", model_path)
+    trainer.export_onnx(local_onnx_path)
+    shutil.copy2(local_onnx_path, p2p_onnx_path)
+    logger.info("初始模型已同步到 P2P 目录: %s", p2p_onnx_path)
 
-        # 生成空模型
-        logger.info("生成空模型 (obs_dim=%d, action_dim=%d, hidden=%d)", obs_dim, action_dim, hidden_dim)
-        model = build_actor_critic(obs_dim, action_dim, hidden_dim)
-
-        # 导出到 local 目录
-        export_onnx_model(model, obs_dim, local_onnx_path, logger)
-
-        # 同步到 P2P 目录（供 AIServer 拉取）
-        shutil.copy2(local_onnx_path, p2p_onnx_path)
-        logger.info("空模型已同步到 P2P 目录: %s", p2p_onnx_path)
-
-        return local_onnx_path
+    return trainer
 
 # ---- 主入口 ----
 def main():
@@ -178,13 +112,15 @@ def main():
     parser.add_argument("--config", type=str, default="configs/learner_config.yaml",
                         help="配置文件路径")
     parser.add_argument("--model_path", type=str, default="",
-                        help="本地模型加载路径（为空则自动生成空模型）")
+                        help="本地 checkpoint 加载路径（为空则自动生成空模型）")
     args = parser.parse_args()
 
     # ---- 0. 加载配置 ----
     config = load_config(args.config)
     server_cfg = config.get("server", {})
     buffer_cfg = config.get("buffer", {})
+    model_cfg = config.get("model", {})
+    train_cfg = config.get("training", {})
     log_cfg = config.get("log", {})
     dashboard_cfg = config.get("dashboard", {})
 
@@ -209,12 +145,12 @@ def main():
     # ---- 3. 清理模型缓存（训练启动时清理 P2P 旧模型）----
     clean_model_cache(config, logger)
 
-    # ---- 4. 初始化模型（加载或生成空模型）----
+    # ---- 4. 初始化 PPOTrainer（统一管理模型 + 优化器）----
     try:
-        model_onnx_path = init_model(config, args.model_path, logger)
-        logger.info("模型初始化完成: %s", model_onnx_path)
+        trainer = init_trainer(config, args.model_path, logger)
+        logger.info("PPOTrainer 初始化完成，模型版本: %d", trainer.model_version)
     except Exception as e:
-        logger.error("模型初始化失败: %s", str(e))
+        logger.error("PPOTrainer 初始化失败: %s", str(e))
         import traceback
         logger.error(traceback.format_exc())
         return
@@ -250,44 +186,159 @@ def main():
     logger.info("Learner gRPC 服务已启动，监听: %s", listen_addr)
     logger.info("等待 AIServer 发送样本...")
 
-    # ---- 8. 主循环（Phase 3A：接收样本并统计，训练逻辑为空）----
+    # ---- 8. PPO 训练主循环 ----
     consume_size = buffer_cfg.get("consume_batch_size", 256)
     consume_timeout = buffer_cfg.get("consume_timeout", 1.0)
+    export_interval = model_cfg.get("export_interval", 10)
+    save_name = model_cfg.get("save_name", "SaveModel")
+    export_dir = model_cfg.get("export_dir", "models/local")
+    p2p_dir = model_cfg.get("p2p_dir", "models/p2p")
+    pass_reward_threshold = train_cfg.get("pass_reward_threshold", 10.0)
+
+    local_onnx_path = os.path.join(export_dir, f"{save_name}.onnx")
+    p2p_onnx_path = os.path.join(p2p_dir, f"{save_name}.onnx")
+
     last_log_time = time.time()
     train_step = 0
+
     try:
         while _running:
-            # 条件变量等待：有样本时立即唤醒，无样本时阻塞等待（替代 sleep 轮询）
-            consumed = sample_buffer.consume(consume_size, timeout=consume_timeout)
+            # ---- 8.1 等待 trajectory 积累 ----
+            ready = sample_buffer.get_ready_trajectories(
+                min_samples=consume_size, timeout=consume_timeout
+            )
 
-            if consumed:
-                train_step += 1
-                logger.info("[训练占位] 步骤 %d - 消费 %d 个样本（未执行实际训练）", train_step, len(consumed))
+            if not ready:
+                # 超时无数据，打印状态后继续等待
+                now = time.time()
+                if now - last_log_time >= 5.0:
+                    total_received = sample_buffer.total_received()
+                    if total_received > 0:
+                        traj_stats = sample_buffer.trajectory_stats()
+                        logger.info(
+                            "等待 trajectory | 累计接收: %d | 活跃 traj: %d | 待消费: %d",
+                            total_received, traj_stats["active_trajectories"],
+                            traj_stats["pending_completed"],
+                        )
+                    last_log_time = now
+                continue
 
-                # 记录训练指标（Phase 3A：仅记录缓冲区系统指标，训练指标为占位零值）
-                if metrics_collector is not None:
-                    train_stats = {
-                        "policy_loss": 0.0,
-                        "value_loss": 0.0,
-                        "total_loss": 0.0,
-                        "entropy": 0.0,
-                        "clip_fraction": 0.0,
-                        "mean_advantage": 0.0,
-                        "learning_rate": 0.0,
-                        "model_version": 0,
+            # ---- 8.2 GAE 计算 + Episode 级多 Agent 平均指标 ----
+            all_samples = []
+            # 当前批次 Episode 统计（用于即时反映当前模型效果）
+            batch_episode_rewards = []          # 本批次各 Episode 的平均总奖励
+            batch_reward_breakdowns = []        # 本批次各 Episode 的平均奖励分项 dict
+
+            # 按 episode_id 聚合同一 Episode 的多个 Agent trajectory
+            episode_agent_data = {}             # episode_id → [{"total_reward", "passed", "length", "breakdown"}, ...]
+
+            for traj_key, samples, is_ep_end in ready:
+                ep_id, agent_id = traj_key
+
+                # 跳过空 trajectory（Episode 结束信号但无样本数据）
+                if not samples:
+                    continue
+
+                # 对每条 trajectory 计算 GAE
+                trainer.compute_gae(samples, is_ep_end)
+                all_samples.extend(samples)
+
+                # 收集 Agent 级指标（仅对已完成的 Episode）
+                if is_ep_end:
+                    total_reward = sum(s["reward"] for s in samples)
+                    passed = samples[-1]["reward"] >= pass_reward_threshold if samples else False
+
+                    # 聚合奖励分项（按 Agent 累计每个奖励组件的值）
+                    reward_breakdown = {}
+                    for s in samples:
+                        for rk, val in s.get("reward_details", {}).items():
+                            reward_breakdown[rk] = reward_breakdown.get(rk, 0.0) + val
+
+                    agent_data = {
+                        "total_reward": total_reward,
+                        "passed": passed,
+                        "length": len(samples),
+                        "breakdown": reward_breakdown,
                     }
-                    metrics_collector.on_train_step(train_step, train_stats, sample_buffer.get_stats())
+                    episode_agent_data.setdefault(ep_id, []).append(agent_data)
 
-            # 定期打印缓存状态（每 5 秒）
+            # 对每个 Episode 计算 Agent 平均指标
+            for ep_id, agents_data in episode_agent_data.items():
+                n = len(agents_data)
+                avg_reward = sum(a["total_reward"] for a in agents_data) / n
+                avg_length = sum(a["length"] for a in agents_data) / n
+                # 通关率：通关 Agent 数 / 总 Agent 数
+                avg_passed = sum(1.0 if a["passed"] else 0.0 for a in agents_data) / n
+
+                # 各奖励分项取 Agent 平均
+                all_keys = set()
+                for a in agents_data:
+                    all_keys.update(a["breakdown"].keys())
+                avg_breakdown = {}
+                for key in all_keys:
+                    vals = [a["breakdown"].get(key, 0.0) for a in agents_data]
+                    avg_breakdown[key] = sum(vals) / n
+
+                if metrics_collector is not None:
+                    metrics_collector.on_episode_end(
+                        avg_reward, int(avg_length), avg_passed > 0.5, avg_breakdown
+                    )
+
+                # 收集当前批次 Episode 统计
+                batch_episode_rewards.append(avg_reward)
+                batch_reward_breakdowns.append(avg_breakdown)
+
+            # ---- 8.3 PPO 训练 ----
+            train_step += 1
+            stats = trainer.train_on_batch(all_samples)
+
+            logger.info(
+                "[训练] 步骤 %d | 样本 %d | policy=%.4f | value=%.4f | entropy=%.4f | clip=%.3f | v%d",
+                train_step, len(all_samples),
+                stats["policy_loss"], stats["value_loss"],
+                stats["entropy"], stats["clip_fraction"],
+                stats["model_version"],
+            )
+
+            # ---- 8.4 记录训练指标 ----
+            if metrics_collector is not None:
+                # 构建当前批次 Episode 统计（即时反映当前模型版本的训练效果）
+                batch_stats = {}
+                if batch_episode_rewards:
+                    batch_stats["batch_episode_count"] = len(batch_episode_rewards)
+                    batch_stats["batch_mean_reward"] = round(
+                        sum(batch_episode_rewards) / len(batch_episode_rewards), 4
+                    )
+                    # 计算各奖励分项的批次平均值
+                    merged_breakdown = {}
+                    for bd in batch_reward_breakdowns:
+                        for rk, val in bd.items():
+                            merged_breakdown.setdefault(rk, []).append(val)
+                    batch_stats["batch_reward_breakdown"] = {
+                        rk: round(sum(vals) / len(vals), 4)
+                        for rk, vals in merged_breakdown.items()
+                    }
+                metrics_collector.set_batch_episode_stats(batch_stats)
+                metrics_collector.on_train_step(train_step, stats, sample_buffer.get_stats())
+
+            # ---- 8.5 定期导出 ONNX 模型 ----
+            if train_step % export_interval == 0:
+                trainer.export_onnx(local_onnx_path)
+                shutil.copy2(local_onnx_path, p2p_onnx_path)
+                service.update_model_version(trainer.model_version)
+                logger.info("模型已导出并同步到 P2P: v%d → %s", trainer.model_version, p2p_onnx_path)
+
+            # ---- 8.6 定期打印缓存状态 ----
             now = time.time()
             if now - last_log_time >= 5.0:
-                buf_size = sample_buffer.size()
-                total_received = sample_buffer.total_received()
-                total_consumed = sample_buffer.total_consumed()
-                if total_received > 0:
-                    logger.info("样本缓存: %d | 累计接收: %d | 累计消费: %d",
-                                buf_size, total_received, total_consumed)
+                traj_stats = sample_buffer.trajectory_stats()
+                logger.info(
+                    "缓存状态 | 活跃 traj: %d | 待消费: %d | 累计完成: %d | 累计接收: %d",
+                    traj_stats["active_trajectories"], traj_stats["pending_completed"],
+                    traj_stats["total_completed"], sample_buffer.total_received(),
+                )
                 last_log_time = now
+
     except KeyboardInterrupt:
         pass
 
@@ -296,14 +347,27 @@ def main():
         metrics_collector.close()
         logger.info("训练指标采集器已关闭")
 
-    # ---- 10. 训练结束汇总 ----
+    # ---- 10. 保存最终 checkpoint + 导出最终模型 ----
+    try:
+        checkpoint_path = os.path.join(export_dir, f"{save_name}_final.pt")
+        trainer.save_checkpoint(checkpoint_path)
+        trainer.export_onnx(local_onnx_path)
+        shutil.copy2(local_onnx_path, p2p_onnx_path)
+        logger.info("最终模型已保存: checkpoint=%s, onnx=%s", checkpoint_path, p2p_onnx_path)
+    except Exception as e:
+        logger.error("最终模型保存失败: %s", str(e))
+
+    # ---- 11. 训练结束汇总 ----
     stats = sample_buffer.get_stats()
     logger.info("============================================")
     logger.info("  训练结束汇总")
     logger.info("============================================")
+    logger.info("  训练步数: %d", train_step)
+    logger.info("  模型版本: %d", trainer.model_version)
     logger.info("  累计接收样本: %d", stats["total_received"])
     logger.info("  累计消费样本: %d", stats["total_consumed"])
     logger.info("  峰值缓冲区大小: %d", stats["peak_size"])
+    logger.info("  累计完成 trajectory: %d", stats.get("total_completed", 0))
     logger.info("  拥塞告警次数: %d", stats["warn_count"])
     logger.info("  样本丢失: %d", stats["dropped"])
     if stats["warn_count"] > 0:
@@ -312,7 +376,11 @@ def main():
                        stats["warn_count"], stats["warn_threshold"])
         logger.warning("  建议：增加 Learner 训练并行度 或 减少 AIServer 并行 Episode 数")
 
-    # ---- 11. 优雅退出 ----
+    if metrics_collector is not None:
+        ep_count = metrics_collector.get_episode_count()
+        logger.info("  累计完成 Episode: %d", ep_count)
+
+    # ---- 12. 优雅退出 ----
     logger.info("正在关闭 gRPC 服务...")
     grpc_server.stop(grace=5)
     logger.info("RL-Learner 已停止")

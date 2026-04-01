@@ -12,10 +12,10 @@ server:
 # --- 样本缓存参数 ---
 buffer:
   warn_threshold: 8192            # 拥塞告警水位线，缓冲区样本数超过此值时打印告警（无界队列，不丢弃）
-  consume_batch_size: 256         # 每次训练消费的样本数量
+  consume_batch_size: 512         # 每次训练消费的样本数量
   consume_timeout: 1.0            # 消费等待超时（秒），无数据时阻塞等待的上限
 
-# --- 训练参数（Phase 3B 启用，当前仅占位）---
+# --- PPO 训练参数 ---
 training:
   learning_rate: 0.0003           # Adam 学习率
   gamma: 0.99                     # 折扣因子
@@ -25,6 +25,9 @@ training:
   value_coef: 0.5                 # 价值损失系数
   max_grad_norm: 0.5              # 梯度裁剪
   n_epochs: 4                     # 每批数据训练轮数
+  mini_batch_size: 64             # mini-batch 大小（每个 epoch 内的切分粒度）
+  normalize_advantage: true       # 是否标准化 advantage（推荐开启）
+  pass_reward_threshold: 10.0     # 通关奖励阈值（trajectory 最后一帧 reward >= 此值视为通关）
 
 # --- 模型导出参数 ---
 model:

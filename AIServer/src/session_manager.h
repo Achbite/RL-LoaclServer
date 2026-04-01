@@ -24,6 +24,7 @@ public:
         int   prev_grid_x  = -1;       // 上一帧网格坐标（用于计算距离变化）
         int   prev_grid_y  = -1;
         bool  reached_goal = false;     // 本 Episode 是否到达终点
+        bool  done_collected = false;   // 终止帧样本是否已收集（防止重复收集）
     };
 
     // ---- 单个会话 ----
@@ -31,7 +32,7 @@ public:
         int session_id = 0;
         std::unordered_map<int, AgentRuntime> agents;   // agent_id → 运行时状态
         int current_episode_id = 0;                     // 当前 Episode ID
-        std::vector<maze::Sample> sample_cache;         // 样本缓存
+        std::unordered_map<int, std::vector<maze::Sample>> agent_sample_caches;  // agent_id → 样本缓存（多 Agent 隔离）
 
         // 地图参数（每个 session 独立，支持不同地图配置）
         float map_width  = 0.0f;
@@ -48,6 +49,10 @@ public:
         int grid_rows = 0;              // 网格行数
 
         bool initialized = false;       // 是否已初始化
+
+        // 竞争排名机制
+        int first_done_frame = -1;                  // 首个 Agent 完成时的帧号（-1 表示尚无 Agent 完成）
+        std::vector<int> ranking_order;              // Agent 完成排名顺序（先完成的在前）
     };
 
     SessionManager() = default;

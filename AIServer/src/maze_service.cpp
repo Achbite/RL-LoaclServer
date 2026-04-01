@@ -6,6 +6,9 @@
 #include <ctime>
 #include <chrono>
 #include <thread>
+#include <random>
+#include <numeric>
+#include <sys/stat.h>
 
 // ---- 构造函数 ----
 MazeServiceImpl::MazeServiceImpl(const AIServerConfig& config)
@@ -17,10 +20,25 @@ MazeServiceImpl::MazeServiceImpl(const AIServerConfig& config)
     // 初始化随机种子
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
-    // 训练模式下连接 Learner
+    // 训练模式下连接 Learner 并启动模型监控
     if (config_.server.run_mode == 1) {
         ConnectLearner();
+        StartModelWatcher();
     }
+
+    // 推理模式下直接加载本地模型
+    if (config_.server.run_mode == 2) {
+        std::string model_path = config_.model.local_dir + "/" +
+                                 config_.model.save_name + ".onnx";
+        if (!onnx_inferencer_.LoadModel(model_path)) {
+            LOG_ERROR("MazeService", "推理模式加载模型失败: %s", model_path.c_str());
+        }
+    }
+}
+
+// ---- 析构函数 ----
+MazeServiceImpl::~MazeServiceImpl() {
+    StopModelWatcher();
 }
 
 // ---- 连接 Learner gRPC 服务 ----
@@ -45,6 +63,73 @@ void MazeServiceImpl::ConnectLearner() {
 // ---- 随机策略采样 ----
 int MazeServiceImpl::ChooseRandomAction() {
     return std::rand() % 9;
+}
+
+// ---- 按概率分布采样动作 ----
+int MazeServiceImpl::SampleAction(const std::vector<float>& probs) {
+    // 生成 [0, 1) 随机数
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    float r = dist(rng);
+
+    // 累积概率采样
+    float cumsum = 0.0f;
+    for (int i = 0; i < static_cast<int>(probs.size()); ++i) {
+        cumsum += probs[i];
+        if (r < cumsum) {
+            return i;
+        }
+    }
+    return static_cast<int>(probs.size()) - 1;
+}
+
+// ---- 启动模型监控线程 ----
+void MazeServiceImpl::StartModelWatcher() {
+    watcher_running_.store(true);
+    model_watcher_ = std::thread([this]() {
+        std::string model_path = config_.model.p2p_dir + "/" +
+                                 config_.model.save_name + ".onnx";
+        int poll_interval = config_.model.poll_interval;
+
+        LOG_INFO("ModelWatcher", "模型监控启动: path=%s, interval=%ds",
+                 model_path.c_str(), poll_interval);
+
+        while (watcher_running_.load()) {
+            // 检查文件是否存在且修改时间变化
+            struct stat file_stat;
+            if (stat(model_path.c_str(), &file_stat) == 0) {
+                std::time_t mtime = file_stat.st_mtime;
+                if (mtime != last_model_mtime_) {
+                    // 等待 1 秒确保文件写入完成（shutil.copy2 非原子操作）
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+                    if (onnx_inferencer_.LoadModel(model_path)) {
+                        last_model_mtime_ = mtime;
+                        LOG_INFO("ModelWatcher", "新模型加载成功: %s", model_path.c_str());
+                    } else {
+                        LOG_WARN("ModelWatcher", "新模型加载失败，保留旧模型");
+                    }
+                }
+            }
+
+            // 轮询等待（每秒检查一次运行标志，支持快速退出）
+            for (int i = 0; i < poll_interval && watcher_running_.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        }
+
+        LOG_INFO("ModelWatcher", "模型监控已停止");
+    });
+}
+
+// ---- 停止模型监控线程 ----
+void MazeServiceImpl::StopModelWatcher() {
+    if (watcher_running_.load()) {
+        watcher_running_.store(false);
+        if (model_watcher_.joinable()) {
+            model_watcher_.join();
+        }
+    }
 }
 
 // ---- 构建观测向量（简化版 5 维，验证数据流用）----
@@ -72,32 +157,19 @@ void MazeServiceImpl::BuildObs(const SessionManager::Session& session,
     obs[4] = (max_dist > 0.0f) ? dist / max_dist : 0.0f;
 }
 
-// ---- 计算奖励（简化版：仅通关奖励 + 步数惩罚）----
-float MazeServiceImpl::CalcReward(const SessionManager::Session& session,
-                                  int agent_id, int gx, int gy, bool is_done) {
-    float reward = 0.0f;
-
-    // 步数惩罚
-    reward -= 0.005f;
-
-    // 通关奖励
-    if (is_done && gx == session.end_gx && gy == session.end_gy) {
-        reward += 10.0f;
-    }
-
-    return reward;
-}
-
 // ---- 收集单帧样本 ----
 void MazeServiceImpl::CollectSample(SessionManager::Session& session,
                                     int agent_id, int gx, int gy,
-                                    int action, bool is_done) {
+                                    int action, float old_log_prob,
+                                    float old_vpred, bool is_done) {
     // 构建观测向量
     std::vector<float> obs;
     BuildObs(session, gx, gy, obs);
 
-    // 计算奖励
-    float reward = CalcReward(session, agent_id, gx, gy, is_done);
+    // 计算奖励（独立模块，含分项明细）
+    int agent_num = static_cast<int>(session.agents.size());
+    RewardDetail reward_detail = MazeReward::Calculate(session, agent_id, gx, gy, is_done, agent_num);
+    float reward = reward_detail.total;
 
     // 构建 Sample
     maze::Sample sample;
@@ -106,46 +178,57 @@ void MazeServiceImpl::CollectSample(SessionManager::Session& session,
     }
     sample.set_action(action);
     sample.set_reward(reward);
-    sample.set_old_log_prob(-2.197f);   // log(1/9) ≈ -2.197，随机策略占位
-    sample.set_old_vpred(0.0f);         // 占位
+
+    // 填充奖励分项明细（用于 Dashboard 可视化追踪）
+    auto* details_map = sample.mutable_reward_details();
+    for (const auto& item : reward_detail.items) {
+        (*details_map)[item.first] = item.second;
+    }
+    sample.set_old_log_prob(old_log_prob);   // 模型推理的真实 log 概率
+    sample.set_old_vpred(old_vpred);         // 模型推理的真实价值估计
     sample.set_advantage(0.0f);         // 占位（Learner 端重算）
     sample.set_td_return(0.0f);         // 占位（Learner 端重算）
     sample.set_mask(1.0f);              // 有效样本
 
-    session.sample_cache.push_back(std::move(sample));
+    session.agent_sample_caches[agent_id].push_back(std::move(sample));
 
     LOG_FILE("Sample", "S:%d Agent[%d] grid=(%d,%d) action=%d reward=%.3f cache_size=%zu",
-             session.session_id, agent_id, gx, gy, action, reward, session.sample_cache.size());
+             session.session_id, agent_id, gx, gy, action, reward,
+             session.agent_sample_caches[agent_id].size());
 
     // 达到批量大小时发送（TMax 截断，非 Episode 结束）
-    if (static_cast<int>(session.sample_cache.size()) >= config_.learner.sample_batch_size) {
-        FlushSamples(session, false);
+    if (static_cast<int>(session.agent_sample_caches[agent_id].size()) >= config_.learner.sample_batch_size) {
+        FlushAgentSamples(session, agent_id, false);
     }
 }
 
-// ---- 批量发送样本到 Learner ----
-void MazeServiceImpl::FlushSamples(SessionManager::Session& session, bool is_episode_end) {
-    if (session.sample_cache.empty()) return;
+// ---- 批量发送指定 Agent 的样本到 Learner ----
+void MazeServiceImpl::FlushAgentSamples(SessionManager::Session& session,
+                                        int agent_id, bool is_episode_end) {
+    auto& cache = session.agent_sample_caches[agent_id];
+
+    // 非 Episode 结束时，缓存为空则跳过
+    if (cache.empty() && !is_episode_end) return;
 
     if (!learner_stub_) {
-        LOG_WARN("MazeService", "Learner 未连接，丢弃 S:%d 的 %zu 个样本",
-                 session.session_id, session.sample_cache.size());
-        session.sample_cache.clear();
+        LOG_WARN("MazeService", "Learner 未连接，丢弃 S:%d Agent[%d] 的 %zu 个样本",
+                 session.session_id, agent_id, cache.size());
+        cache.clear();
         return;
     }
 
-    // 构建 SampleBatch
+    // 构建 SampleBatch（agent_id 正确标识）
     maze::SampleBatch batch;
     batch.set_episode_id(session.current_episode_id);
-    batch.set_agent_id(0);
+    batch.set_agent_id(agent_id);
     batch.set_is_episode_end(is_episode_end);
     batch.set_session_id(session.session_id);
-    for (auto& s : session.sample_cache) {
+    for (auto& s : cache) {
         *batch.add_samples() = std::move(s);
     }
 
     int batch_size = batch.samples_size();
-    session.sample_cache.clear();
+    cache.clear();
 
     // 发送（失败时重试，利用 gRPC 同步调用的背压机制保证零丢弃）
     int max_retries = config_.learner.max_retries;
@@ -160,8 +243,8 @@ void MazeServiceImpl::FlushSamples(SessionManager::Session& session, bool is_epi
         status = learner_stub_->SendSamples(&ctx, batch, &response);
 
         if (status.ok()) {
-            LOG_INFO("MazeService", "样本发送成功: S:%d %d 个 ep_end=%s, Learner 模型版本: %d",
-                     session.session_id, batch_size,
+            LOG_INFO("MazeService", "样本发送成功: S:%d Agent[%d] %d 个 ep_end=%s, Learner 模型版本: %d",
+                     session.session_id, agent_id, batch_size,
                      is_episode_end ? "true" : "false",
                      response.model_version());
             return;
@@ -246,6 +329,7 @@ grpc::Status MazeServiceImpl::Init(grpc::ServerContext* ctx,
         agent.prev_grid_x = -1;
         agent.prev_grid_y = -1;
         agent.reached_goal = false;
+        agent.done_collected = false;
 
         if (config_.server.run_mode == 3) {
             InitAgentSolver(agent, *session);
@@ -300,9 +384,37 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
         auto* action = rsp->add_actions();
         action->set_agent_id(agent_id);
 
-        // 已结束的 Agent 不下发动作
+        // 已结束的 Agent：记录排名 + 收集终止帧样本后跳过动作下发
         if (is_done) {
             action->set_action_id(0);
+
+            // 训练模式：记录排名并收集终止帧样本
+            if (config_.server.run_mode == 1) {
+                auto it = session->agents.find(agent_id);
+                if (it != session->agents.end() && !it->second.done_collected) {
+                    // 标记终止帧已收集（仅收集一次）
+                    it->second.done_collected = true;
+                    it->second.reached_goal = (cur_gx == session->end_gx && cur_gy == session->end_gy);
+
+                    // 记录完成排名（先完成的排在前面）
+                    session->ranking_order.push_back(agent_id);
+                    if (session->first_done_frame < 0) {
+                        session->first_done_frame = frame_id;
+                    }
+                    LOG_INFO("MazeService", "S:%d Agent[%d] 完成排名 #%d (goal=%s frame=%d)",
+                             session_id, agent_id,
+                             static_cast<int>(session->ranking_order.size()),
+                             it->second.reached_goal ? "true" : "false", frame_id);
+
+                    CollectSample(*session, agent_id, cur_gx, cur_gy,
+                                  0, -2.197f, 0.0f, true);
+                    it->second.prev_grid_x = cur_gx;
+                    it->second.prev_grid_y = cur_gy;
+                    LOG_FILE("RPC:Update", "  S:%d Agent[%d]: 终止帧样本已收集 (done rank=#%d)",
+                             session_id, agent_id, static_cast<int>(session->ranking_order.size()));
+                }
+            }
+
             LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=0 (done)", session_id, agent_id);
             continue;
         }
@@ -339,22 +451,55 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
             }
             LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=%d (astar) grid=(%d,%d)",
                      session_id, agent_id, chosen_action, cur_gx, cur_gy);
-        } else {
-            // 随机策略（训练模式默认）
-            chosen_action = ChooseRandomAction();
-            LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=%d (random) grid=(%d,%d)",
-                     session_id, agent_id, chosen_action, cur_gx, cur_gy);
+        } else if (config_.server.run_mode == 1 || config_.server.run_mode == 2) {
+            // 训练/推理模式：优先 ONNX 推理，无模型时回退随机策略
+            float old_log_prob = -2.197f;   // log(1/9) 随机策略默认值
+            float old_vpred = 0.0f;
+
+            if (onnx_inferencer_.IsLoaded()) {
+                // ONNX 模型推理
+                std::vector<float> obs;
+                BuildObs(*session, cur_gx, cur_gy, obs);
+
+                std::vector<float> action_probs;
+                float value = 0.0f;
+
+                if (onnx_inferencer_.Infer(obs, static_cast<int>(obs.size()),
+                                          action_probs, value)) {
+                    chosen_action = SampleAction(action_probs);
+                    old_log_prob = std::log(action_probs[chosen_action] + 1e-8f);
+                    old_vpred = value;
+                    LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=%d (onnx) prob=%.3f value=%.3f grid=(%d,%d)",
+                             session_id, agent_id, chosen_action,
+                             action_probs[chosen_action], value, cur_gx, cur_gy);
+                } else {
+                    // 推理失败，回退随机策略
+                    chosen_action = ChooseRandomAction();
+                    LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=%d (random-fallback) grid=(%d,%d)",
+                             session_id, agent_id, chosen_action, cur_gx, cur_gy);
+                }
+            } else {
+                // 无模型，随机策略
+                chosen_action = ChooseRandomAction();
+                LOG_FILE("RPC:Update", "  S:%d Agent[%d]: action=%d (random-no-model) grid=(%d,%d)",
+                         session_id, agent_id, chosen_action, cur_gx, cur_gy);
+            }
+
+            action->set_action_id(chosen_action);
+            agent.last_action = chosen_action;
+
+            // 训练模式：收集样本
+            if (config_.server.run_mode == 1) {
+                CollectSample(*session, agent_id, cur_gx, cur_gy,
+                              chosen_action, old_log_prob, old_vpred, is_done);
+                agent.prev_grid_x = cur_gx;
+                agent.prev_grid_y = cur_gy;
+            }
+            continue;   // 跳过下方的通用 action 设置
         }
 
         action->set_action_id(chosen_action);
         agent.last_action = chosen_action;
-
-        // ---- 训练模式：收集样本 ----
-        if (config_.server.run_mode == 1) {
-            CollectSample(*session, agent_id, cur_gx, cur_gy, chosen_action, is_done);
-            agent.prev_grid_x = cur_gx;
-            agent.prev_grid_y = cur_gy;
-        }
     }
 
     return grpc::Status::OK;
@@ -380,12 +525,16 @@ grpc::Status MazeServiceImpl::EndEpisode(grpc::ServerContext* ctx,
     LOG_INFO("MazeService", "S:%d Episode %d 结束", session_id, ep_id);
     LOG_FILE("RPC:EndEpisode", "S:%d EpisodeEndReq: episode_id=%d", session_id, ep_id);
 
-    // 训练模式：发送剩余样本（标记 is_episode_end=true）
+    // 训练模式：遍历所有 Agent，发送各自剩余样本（标记 is_episode_end=true）
     if (config_.server.run_mode == 1) {
-        if (!session->sample_cache.empty()) {
-            LOG_INFO("MazeService", "S:%d Episode %d 结束，发送剩余 %zu 个样本",
-                     session_id, ep_id, session->sample_cache.size());
-            FlushSamples(*session, true);
+        for (auto& [aid, agent] : session->agents) {
+            auto& cache = session->agent_sample_caches[aid];
+            if (!cache.empty()) {
+                LOG_INFO("MazeService", "S:%d Episode %d Agent[%d] 结束，发送剩余 %zu 个样本",
+                         session_id, ep_id, aid, cache.size());
+            }
+            // 即使缓存为空也发送 is_episode_end=true 信号，确保 Learner 端 trajectory 完成
+            FlushAgentSamples(*session, aid, true);
         }
     }
 
@@ -402,7 +551,12 @@ grpc::Status MazeServiceImpl::EndEpisode(grpc::ServerContext* ctx,
         agent.prev_grid_x = -1;
         agent.prev_grid_y = -1;
         agent.reached_goal = false;
+        agent.done_collected = false;
     }
+
+    // 重置竞争排名状态
+    session->first_done_frame = -1;
+    session->ranking_order.clear();
 
     rsp->set_ret_code(0);
     LOG_FILE("RPC:EndEpisode", "S:%d EpisodeEndRsp: ret_code=0", session_id);

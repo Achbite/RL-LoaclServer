@@ -34,12 +34,19 @@ class MetricsCollector:
         self._episode_passed = deque(maxlen=window_size)    # 是否通关（0/1）
         self._episode_count = 0                              # 累计完成 Episode 数
 
+        # 奖励分项滑动窗口（动态创建，自动发现新奖励组件）
+        self._reward_breakdown_windows = {}                  # key → deque
+
+        # 当前批次 Episode 统计（每个 train_step 重置）
+        self._batch_episode_stats = {}                       # 由 train.py 每批次传入
+
         # 时间统计
         self._start_time = time.time()
         self._last_consumed = 0
         self._last_throughput_time = time.time()
 
-    def on_episode_end(self, total_reward: float, length: int, passed: bool):
+    def on_episode_end(self, total_reward: float, length: int, passed: bool,
+                       reward_breakdown: Optional[dict] = None):
         """
         Episode 结束时调用，更新滑动窗口
 
@@ -47,11 +54,31 @@ class MetricsCollector:
             total_reward: 该 Episode 的总奖励
             length: 该 Episode 的帧数
             passed: 是否通关
+            reward_breakdown: 奖励分项汇总（key=奖励名, value=该 Episode 累计值）
         """
         self._episode_rewards.append(total_reward)
         self._episode_lengths.append(length)
         self._episode_passed.append(1.0 if passed else 0.0)
         self._episode_count += 1
+
+        # 自动发现并追踪奖励分项
+        if reward_breakdown:
+            for key, val in reward_breakdown.items():
+                if key not in self._reward_breakdown_windows:
+                    self._reward_breakdown_windows[key] = deque(maxlen=self._window_size)
+                self._reward_breakdown_windows[key].append(val)
+
+    def set_batch_episode_stats(self, batch_stats: dict):
+        """
+        设置当前批次的 Episode 统计（由训练循环在 on_train_step 前调用）
+
+        Args:
+            batch_stats: 当前批次 Episode 统计
+                - batch_episode_count: 本批次完成的 Episode 数
+                - batch_mean_reward: 本批次 Episode 平均总奖励
+                - batch_reward_breakdown: 本批次各奖励分项平均值 {key: mean_val}
+        """
+        self._batch_episode_stats = batch_stats
 
     def on_train_step(self, step: int, train_stats: dict, buffer_stats: dict):
         """
@@ -104,6 +131,22 @@ class MetricsCollector:
             "samples_per_sec": round(samples_per_sec, 1),
             "model_version": train_stats.get("model_version", 0),
         }
+
+        # 自动追加所有奖励分项的滑动窗口平均值（趋势线）
+        for key, window in self._reward_breakdown_windows.items():
+            record[f"mean_{key}"] = self._safe_mean(window)
+
+        # 追加当前批次 Episode 统计（即时反映当前模型效果）
+        batch = self._batch_episode_stats
+        record["batch_episode_count"] = batch.get("batch_episode_count", 0)
+        record["batch_mean_reward"] = batch.get("batch_mean_reward", 0.0)
+        # 自动追加所有奖励分项的批次平均值
+        batch_breakdown = batch.get("batch_reward_breakdown", {})
+        for key, val in batch_breakdown.items():
+            record[f"batch_mean_{key}"] = round(val, 4)
+
+        # 重置批次统计（避免下一步无 Episode 时残留旧数据）
+        self._batch_episode_stats = {}
 
         self._backend.write(record)
 

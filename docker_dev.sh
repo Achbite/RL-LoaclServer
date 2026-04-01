@@ -300,14 +300,15 @@ case "$TARGET" in
         docker compose run --rm --service-ports maze-client bash
         ;;
     train)
-        # TrainClient 并行训练：交互式 bash
+        # TrainClient 并行训练：交互式 bash（--service-ports 映射可视化端口）
         info "--- 进入 TrainClient 并行训练容器交互式 bash ---"
         info "退出容器: 输入 exit 或按 Ctrl+D"
         echo ""
         info "编译项目: ./build.sh"
         info "并行训练: ./run_train.sh"
+        info "可视化服务: http://localhost:9004（run_train.sh 启动后自动挂载后台）"
         echo ""
-        docker compose run --rm maze-train bash
+        docker compose run --rm --service-ports maze-train bash
         ;;
     learner)
         # Learner：后台启动服务 + 进入交互式 bash

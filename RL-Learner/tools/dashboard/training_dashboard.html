@@ -306,6 +306,7 @@ let lastStep = 0;           // 上次拉取的最大 train_step
 let isConnected = false;
 let refreshTimer = null;
 let charts = {};            // Chart.js 实例
+let chartFocus = {};        // 每个图表的聚焦状态 { canvasId: Set<datasetIndex> }
 
 // 图表配色
 const COLORS = {
@@ -319,7 +320,7 @@ const COLORS = {
     grey:   '#607d8b',
 };
 
-// Chart.js 全局配置
+// Chart.js 全局配置（legend onClick 在创建图表时单独注入）
 const CHART_DEFAULTS = {
     responsive: true,
     maintainAspectRatio: false,
@@ -340,6 +341,75 @@ const CHART_DEFAULTS = {
         }
     }
 };
+
+// ============================================================================
+// 图表聚焦交互
+// ============================================================================
+
+// ---- 聚焦 legend 点击处理 ----
+// 点击某条曲线 → 聚焦（只显示它，隐藏其他，Y 轴自动适配聚焦数据）
+// 聚焦模式下点击其他曲线 → 追加到聚焦集合
+// 再次点击已聚焦的曲线 → 从聚焦集合移除（集合空则恢复全部）
+function makeFocusLegendClick(canvasId) {
+    return function(e, legendItem, legend) {
+        const chart = legend.chart;
+        const idx = legendItem.datasetIndex;
+        if (!chartFocus[canvasId]) chartFocus[canvasId] = new Set();
+        const focused = chartFocus[canvasId];
+
+        if (focused.size === 0) {
+            // 当前无聚焦 → 进入聚焦模式，只显示点击的曲线
+            focused.add(idx);
+        } else if (focused.has(idx)) {
+            // 点击已聚焦的曲线 → 取消聚焦
+            focused.delete(idx);
+        } else {
+            // 聚焦模式下点击其他曲线 → 追加到聚焦集合
+            focused.add(idx);
+        }
+
+        applyFocusState(canvasId, chart);
+    };
+}
+
+// ---- 应用聚焦状态到图表 ----
+function applyFocusState(canvasId, chart) {
+    const focused = chartFocus[canvasId];
+    const hasFocus = focused && focused.size > 0;
+
+    chart.data.datasets.forEach((ds, i) => {
+        // 聚焦模式：非聚焦曲线设为 hidden，Y 轴自动排除其数据
+        ds.hidden = hasFocus ? !focused.has(i) : false;
+    });
+
+    // 更新后 Chart.js 会自动根据可见 dataset 重新计算 Y 轴范围
+    chart.update('none');
+}
+
+// ---- 清除指定图表的聚焦状态（点击空白区域时调用）----
+function clearFocus(canvasId) {
+    if (chartFocus[canvasId] && chartFocus[canvasId].size > 0) {
+        chartFocus[canvasId].clear();
+        const chart = charts[canvasId];
+        if (chart) applyFocusState(canvasId, chart);
+    }
+}
+
+// ---- 为 canvas 注册空白区域点击事件（恢复全部显示）----
+function bindCanvasClickReset(canvasId) {
+    const canvas = document.getElementById(canvasId);
+    canvas.addEventListener('click', function(evt) {
+        const chart = charts[canvasId];
+        if (!chart) return;
+
+        // 检测是否点击在数据点或 legend 上
+        const elements = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+        if (elements.length === 0) {
+            // 点击空白区域 → 清除聚焦
+            clearFocus(canvasId);
+        }
+    });
+}
 
 // ============================================================================
 // 服务器通信
@@ -430,6 +500,56 @@ function getVisibleRecords() {
     return allRecords.slice(-range);
 }
 
+// ---- 奖励分项配色表（自动循环分配）----
+const REWARD_BREAKDOWN_COLORS = [
+    '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#8bc34a',
+    '#ff5722', '#3f51b5', '#009688', '#ffc107', '#795548',
+];
+
+// ---- 自动发现奖励分项字段并生成图表数据集 ----
+// 同时生成滑动窗口平均（mean_*，趋势线）和批次平均（batch_mean_*，即时效果）
+function getRewardBreakdownDatasets(records, windowSize) {
+    if (records.length === 0) return [];
+
+    const latest = records[records.length - 1];
+    // 排除非奖励分项的 mean_ 字段
+    const excludeKeys = new Set(['mean_episode_reward', 'mean_episode_length', 'mean_advantage']);
+
+    // 发现滑动窗口平均字段（mean_*，不含 batch_mean_*）
+    const meanKeys = Object.keys(latest)
+        .filter(k => k.startsWith('mean_') && !excludeKeys.has(k));
+
+    // 发现批次平均字段（batch_mean_*）
+    const batchKeys = Object.keys(latest)
+        .filter(k => k.startsWith('batch_mean_'));
+
+    const datasets = [];
+    let colorIdx = 0;
+
+    // 批次平均曲线（实线，即时反映当前模型效果）
+    batchKeys.forEach(key => {
+        const color = REWARD_BREAKDOWN_COLORS[colorIdx++ % REWARD_BREAKDOWN_COLORS.length];
+        datasets.push({
+            label: '[批次] ' + key.replace('batch_mean_', ''),
+            data: smooth(records.map(r => r[key] || 0), windowSize),
+            color: color,
+        });
+    });
+
+    // 滑动窗口平均曲线（虚线，平滑趋势参考）
+    meanKeys.forEach(key => {
+        const color = REWARD_BREAKDOWN_COLORS[colorIdx++ % REWARD_BREAKDOWN_COLORS.length];
+        datasets.push({
+            label: '[趋势] ' + key.replace('mean_', ''),
+            data: smooth(records.map(r => r[key] || 0), windowSize),
+            color: color,
+            borderDash: [6, 3],  // 虚线样式区分趋势线
+        });
+    });
+
+    return datasets;
+}
+
 // ============================================================================
 // 更新面板
 // ============================================================================
@@ -467,7 +587,9 @@ function updateDashboard() {
     const steps = records.map(r => r.train_step);
 
     updateChart('chartReward', steps, [
-        { label: '平均 Episode 奖励', data: smooth(records.map(r => r.mean_episode_reward), windowSize), color: COLORS.blue },
+        { label: '[批次] Episode 奖励', data: smooth(records.map(r => r.batch_mean_reward || 0), windowSize), color: COLORS.blue },
+        { label: '[趋势] Episode 奖励', data: smooth(records.map(r => r.mean_episode_reward), windowSize), color: COLORS.blue, borderDash: [6, 3] },
+        ...getRewardBreakdownDatasets(records, windowSize),
     ]);
 
     updateChart('chartLoss', steps, [
@@ -516,6 +638,7 @@ function updateKPI(valueId, value, unit, trendId, delta, inverseTrend) {
 }
 
 // ---- 创建或更新图表 ----
+// 刷新时只更新数据，保留聚焦状态（hidden 属性），Y 轴自动适配可见曲线
 function updateChart(canvasId, labels, datasets, dualAxis) {
     const maxPoints = 2000;
 
@@ -527,6 +650,9 @@ function updateChart(canvasId, labels, datasets, dualAxis) {
             options: JSON.parse(JSON.stringify(CHART_DEFAULTS)),
         };
 
+        // 注入自定义聚焦 legend 点击处理
+        config.options.plugins.legend.onClick = makeFocusLegendClick(canvasId);
+
         if (dualAxis) {
             config.options.scales.y1 = {
                 position: 'right',
@@ -536,6 +662,9 @@ function updateChart(canvasId, labels, datasets, dualAxis) {
         }
 
         charts[canvasId] = new Chart(ctx, config);
+
+        // 注册空白区域点击恢复事件
+        bindCanvasClickReset(canvasId);
     }
 
     const chart = charts[canvasId];
@@ -557,8 +686,22 @@ function updateChart(canvasId, labels, datasets, dualAxis) {
         }));
     }
 
+    // ---- 读取当前聚焦状态 ----
+    const focused = chartFocus[canvasId];
+    const hasFocus = focused && focused.size > 0;
+
+    // ---- 如果 dataset 数量变化（如新增奖励分项），重置聚焦 ----
+    if (hasFocus) {
+        const oldCount = chart.data.datasets.length;
+        const newCount = displayDatasets.length;
+        if (oldCount !== newCount) {
+            focused.clear();
+        }
+    }
+
+    // ---- 更新数据，保留聚焦 hidden 状态 ----
     chart.data.labels = displayLabels;
-    chart.data.datasets = displayDatasets.map(ds => ({
+    chart.data.datasets = displayDatasets.map((ds, i) => ({
         label: ds.label,
         data: ds.data,
         borderColor: ds.color,
@@ -567,7 +710,10 @@ function updateChart(canvasId, labels, datasets, dualAxis) {
         borderWidth: 1.5,
         pointRadius: 0,
         tension: 0.3,
+        borderDash: ds.borderDash || [],  // 支持虚线样式（趋势线）
         yAxisID: ds.yAxisID || 'y',
+        // 保留聚焦状态：聚焦模式下非聚焦曲线隐藏
+        hidden: (focused && focused.size > 0) ? !focused.has(i) : false,
     }));
 
     chart.update('none');
