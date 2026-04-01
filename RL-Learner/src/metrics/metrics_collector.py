@@ -13,7 +13,7 @@ import time
 from collections import deque
 from typing import Optional
 
-from src.metrics_backend import MetricsBackend
+from src.metrics.metrics_backend import MetricsBackend
 
 
 class MetricsCollector:

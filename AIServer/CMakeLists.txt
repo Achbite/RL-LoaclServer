@@ -16,12 +16,12 @@ pkg_check_modules(GRPC REQUIRED grpc++)
 # --- 源文件 ---
 set(SOURCES
     main/main.cpp
-    src/maze_service.cpp
-    src/maze_reward.cpp
-    src/astar_solver.cpp
-    src/config_loader.cpp
-    src/session_manager.cpp
-    src/onnx_inferencer.cpp
+    src/grpc/maze_service.cpp
+    src/ai/maze_reward.cpp
+    src/ai/astar_solver.cpp
+    src/config/config_loader.cpp
+    src/session/session_manager.cpp
+    src/ai/onnx_inferencer.cpp
 )
 
 # --- Proto 生成文件（由 gen_proto.sh 预先生成）---

@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from proto import maze_pb2
 from proto import maze_pb2_grpc
-from src.sample_buffer import SampleBuffer
-from src.logger import setup_logger
+from src.training.sample_buffer import SampleBuffer
+from src.log.logger import setup_logger
 
 
 class LearnerServiceImpl(maze_pb2_grpc.LearnerServiceServicer):
@@ -58,9 +58,9 @@ class LearnerServiceImpl(maze_pb2_grpc.LearnerServiceServicer):
         if self._buffer.check_congestion():
             stats = self._buffer.trajectory_stats()
             self._logger.warning(
-                "⚠ 缓冲区拥塞: 活跃样本 %d，活跃 trajectory %d，"
+                "⚠ 缓冲区拥塞: 待消费样本 %d，待消费片段 %d，"
                 "Learner 消费速度可能跟不上 AIServer 样本产生速度",
-                stats["active_samples"], stats["active_trajectories"],
+                stats["active_samples"], stats["pending_fragments"],
             )
 
         # 构造响应

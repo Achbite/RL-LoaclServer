@@ -1,6 +1,6 @@
-#include "maze_service.h"
-#include "config_loader.h"
-#include "logger.h"
+#include "grpc/maze_service.h"
+#include "config/config_loader.h"
+#include "log/logger.h"
 
 #include <grpcpp/grpcpp.h>
 #include <cstdio>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "astar_solver.h"
+#include "ai/astar_solver.h"
 #include "maze.pb.h"
 
 #include <unordered_map>

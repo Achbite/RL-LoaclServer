@@ -1,8 +1,8 @@
 #pragma once
 
-#include "maze_env.h"
-#include "grpc_client.h"
-#include "config_loader.h"
+#include "env/maze_env.h"
+#include "grpc/grpc_client.h"
+#include "config/config_loader.h"
 
 #include <vector>
 #include <queue>

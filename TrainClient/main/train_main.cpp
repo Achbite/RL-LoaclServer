@@ -1,11 +1,11 @@
-#include "grpc_client.h"
-#include "maze_env.h"
+#include "grpc/grpc_client.h"
+#include "env/maze_env.h"
 #include "maze.pb.h"
-#include "config_loader.h"
-#include "thread_pool.h"
-#include "episode_pool.h"
-#include "viz_recorder.h"
-#include "logger.h"
+#include "config/config_loader.h"
+#include "pool/thread_pool.h"
+#include "pool/episode_pool.h"
+#include "viz/viz_recorder.h"
+#include "log/logger.h"
 
 #include <cmath>
 #include <string>

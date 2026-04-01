@@ -1,5 +1,5 @@
-#include "viz_recorder.h"
-#include "logger.h"
+#include "viz/viz_recorder.h"
+#include "log/logger.h"
 
 // ---- 析构函数 ----
 VizRecorder::~VizRecorder() {

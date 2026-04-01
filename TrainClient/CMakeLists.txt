@@ -18,11 +18,11 @@ pkg_check_modules(GRPC REQUIRED grpc++)
 
 # --- 共享源文件（不含 main）---
 set(SHARED_SOURCES
-    src/grpc_client.cpp
-    src/maze_env.cpp
-    src/config_loader.cpp
-    src/viz_recorder.cpp
-    src/episode_pool.cpp
+    src/grpc/grpc_client.cpp
+    src/env/maze_env.cpp
+    src/config/config_loader.cpp
+    src/viz/viz_recorder.cpp
+    src/pool/episode_pool.cpp
 )
 
 # --- Proto 生成文件（由 gen_proto.sh 预先生成）---

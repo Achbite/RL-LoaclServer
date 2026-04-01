@@ -4,6 +4,8 @@
 支持两种模式：
   - 扁平模式：push_batch() / consume()（Phase 3A 兼容）
   - Trajectory 模式：push_trajectory() / get_ready_trajectories()（Phase 3B PPO 训练）
+    方案 A：TMax 截断即消费 —— 每收到一个 TMax 片段立即标记可消费，
+    不再等待 Episode 完整结束，大幅降低样本延迟和缓冲区堆积。
 """
 
 import threading
@@ -25,12 +27,14 @@ class SampleBuffer:
         self._cond = threading.Condition()           # 条件变量：替代 Lock，支持 wait/notify
         self._warn_threshold = warn_threshold
 
-        # ---- Trajectory 模式（Phase 3B PPO 训练）----
-        # key=(episode_id, agent_id), value={"samples": list, "complete": bool}
-        self._trajectories = {}
-        self._completed_keys = deque()               # 已完成的 trajectory key 队列（FIFO 消费）
+        # ---- Trajectory 模式（Phase 3B PPO 训练 — 方案 A：TMax 即消费）----
+        # 就绪片段队列：每个元素 = (traj_key, samples, is_episode_end)
+        # traj_key = (episode_id, agent_id)
+        self._ready_fragments = deque()
         self._traj_cond = threading.Condition()      # trajectory 专用条件变量
-        self._total_traj_completed = 0               # 累计完成的 trajectory 数
+        self._total_traj_completed = 0               # 累计完成的 Episode trajectory 数
+        self._total_fragments = 0                    # 累计接收的片段数（含 TMax 截断和 Episode 结束）
+        self._active_fragment_samples = 0            # 就绪队列中待消费的样本总数
 
         # ---- 统计计数器 ----
         self._total_received = 0                     # 累计接收样本数
@@ -40,79 +44,74 @@ class SampleBuffer:
         self._last_warn_time = 0.0                   # 上次告警时间（避免日志刷屏）
 
     # ========================================================================
-    #  Trajectory 模式接口（Phase 3B PPO 训练使用）
+    #  Trajectory 模式接口（Phase 3B PPO 训练 — 方案 A：TMax 即消费）
     # ========================================================================
 
     # ---- 推入一条 trajectory 片段 ----
     def push_trajectory(self, episode_id: int, agent_id: int, samples: list, is_episode_end: bool):
         """
-        推入一条 trajectory 片段，按 (episode_id, agent_id) 组织
+        推入一条 trajectory 片段，立即标记为可消费（方案 A：TMax 即消费）
 
-        同一 (episode_id, agent_id) 可能收到多个 SampleBatch（每 TMax=32 帧一批），
-        本方法将它们拼接为完整 trajectory。当 is_episode_end=True 时标记完成。
+        每次收到 TMax=32 帧的片段就直接放入就绪队列，训练线程可以立即取走。
+        不再等待 Episode 完整结束，大幅降低样本延迟。
 
         Args:
             episode_id: Episode 编号
             agent_id: Agent 编号
             samples: 样本 dict 列表
-            is_episode_end: True=Episode 结束，False=TMax 截断（后续还有数据）
+            is_episode_end: True=Episode 结束（GAE 用 V=0），False=TMax 截断（GAE 用 Bootstrap）
         """
         key = (episode_id, agent_id)
 
         with self._traj_cond:
-            # 追加到对应 trajectory
-            if key not in self._trajectories:
-                self._trajectories[key] = {"samples": [], "complete": False}
-
-            self._trajectories[key]["samples"].extend(samples)
+            # 直接放入就绪队列（不再缓存拼接）
+            self._ready_fragments.append((key, samples, is_episode_end))
+            self._total_fragments += 1
 
             # 更新统计
             self._total_received += len(samples)
+            self._active_fragment_samples += len(samples)
 
-            # Episode 结束时标记完成
             if is_episode_end:
-                self._trajectories[key]["complete"] = True
-                self._completed_keys.append(key)
                 self._total_traj_completed += 1
-                self._traj_cond.notify()             # 唤醒训练线程
 
-            # 拥塞检测（基于活跃 trajectory 中的总样本数）
-            total_samples = sum(len(t["samples"]) for t in self._trajectories.values())
-            if total_samples > self._peak_size:
-                self._peak_size = total_samples
+            # 峰值追踪
+            if self._active_fragment_samples > self._peak_size:
+                self._peak_size = self._active_fragment_samples
 
-    # ---- 获取已完成的 trajectory 列表 ----
+            # 唤醒训练线程
+            self._traj_cond.notify()
+
+    # ---- 获取就绪的 trajectory 片段列表 ----
     def get_ready_trajectories(self, min_samples: int = 256, timeout: float = 1.0) -> List[Tuple]:
         """
-        获取已完成的 trajectory 列表，直到累计样本数 >= min_samples
+        获取就绪的 trajectory 片段列表，直到累计样本数 >= min_samples
+
+        方案 A 下，每个 TMax 片段都是独立可消费的，不再等待 Episode 完整结束。
 
         Args:
             min_samples: 最少需要的样本数（不强制凑满，有多少取多少）
             timeout: 等待超时（秒），无数据时阻塞等待
         Returns:
-            [(key, samples, is_episode_end), ...] 列表，空列表表示超时无数据
+            [(traj_key, samples, is_episode_end), ...] 列表，空列表表示超时无数据
         """
         with self._traj_cond:
-            # 无已完成 trajectory 时等待
-            while len(self._completed_keys) == 0:
+            # 无就绪片段时等待
+            while len(self._ready_fragments) == 0:
                 if not self._traj_cond.wait(timeout):
                     return []                        # 超时，返回空让主循环检查退出标志
 
-            # 取出已完成的 trajectory，直到累计样本数 >= min_samples
+            # 取出就绪片段，直到累计样本数 >= min_samples
             result = []
             total_count = 0
 
-            while self._completed_keys and total_count < min_samples:
-                key = self._completed_keys.popleft()
-                traj_data = self._trajectories.pop(key, None)
-                if traj_data is None:
-                    continue
+            while self._ready_fragments and total_count < min_samples:
+                key, samples, is_ep_end = self._ready_fragments.popleft()
 
-                samples = traj_data["samples"]
                 total_count += len(samples)
                 self._total_consumed += len(samples)
-                # trajectory 模式下取出的都是 complete=True 的
-                result.append((key, samples, True))
+                self._active_fragment_samples -= len(samples)
+                result.append((key, samples, is_ep_end))
 
             return result
 
@@ -120,14 +119,11 @@ class SampleBuffer:
     def trajectory_stats(self) -> dict:
         """返回 trajectory 组织层的统计信息"""
         with self._traj_cond:
-            active_count = sum(1 for t in self._trajectories.values() if not t["complete"])
-            pending_count = len(self._completed_keys)
-            active_samples = sum(len(t["samples"]) for t in self._trajectories.values())
             return {
-                "active_trajectories": active_count,       # 正在接收中的 trajectory 数
-                "pending_completed": pending_count,         # 已完成待消费的 trajectory 数
-                "total_completed": self._total_traj_completed,  # 累计完成的 trajectory 数
-                "active_samples": active_samples,           # 活跃 trajectory 中的总样本数
+                "pending_fragments": len(self._ready_fragments),    # 待消费的片段数
+                "active_samples": self._active_fragment_samples,    # 待消费的样本总数
+                "total_completed": self._total_traj_completed,      # 累计完成的 Episode trajectory 数
+                "total_fragments": self._total_fragments,           # 累计接收的片段数
             }
 
     # ========================================================================
@@ -196,8 +192,7 @@ class SampleBuffer:
     def check_congestion(self) -> bool:
         """检查缓冲区是否超过告警水位线，超过时递增告警计数"""
         with self._traj_cond:
-            total_samples = sum(len(t["samples"]) for t in self._trajectories.values())
-            if total_samples > self._warn_threshold:
+            if self._active_fragment_samples > self._warn_threshold:
                 now = time.time()
                 # 限流：同一告警至少间隔 10 秒
                 if now - self._last_warn_time >= 10.0:
@@ -219,9 +214,9 @@ class SampleBuffer:
             "current_size": traj_stats["active_samples"],
             "dropped": 0,                            # 无界队列，永远为 0
             # trajectory 统计
-            "active_trajectories": traj_stats["active_trajectories"],
-            "pending_completed": traj_stats["pending_completed"],
+            "pending_fragments": traj_stats["pending_fragments"],
             "total_completed": traj_stats["total_completed"],
+            "total_fragments": traj_stats["total_fragments"],
         }
 
     # ---- 清空缓存 ----
@@ -229,8 +224,8 @@ class SampleBuffer:
         with self._cond:
             self._buffer.clear()
         with self._traj_cond:
-            self._trajectories.clear()
-            self._completed_keys.clear()
+            self._ready_fragments.clear()
+            self._active_fragment_samples = 0
 
     # ---- 内部：更新峰值并检测拥塞 ----
     def _update_peak(self):

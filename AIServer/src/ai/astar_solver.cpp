@@ -1,5 +1,5 @@
-#include "astar_solver.h"
-#include "logger.h"
+#include "ai/astar_solver.h"
+#include "log/logger.h"
 
 #include <cmath>
 #include <queue>

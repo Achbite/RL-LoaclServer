@@ -1,5 +1,5 @@
-#include "maze_service.h"
-#include "logger.h"
+#include "grpc/maze_service.h"
+#include "log/logger.h"
 
 #include <cstdlib>
 #include <cmath>

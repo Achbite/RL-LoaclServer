@@ -32,7 +32,7 @@ services:
     container_name: maze-aiserver
     volumes:
       - .:/workspace
-      - model-data:/workspace/AIServer/models/p2p    # Learner 模型共享卷 → p2p 目录
+      - ./RL-Learner/models/p2p:/workspace/AIServer/models/p2p    # Learner P2P 模型 → AIServer P2P 目录（只读共享）
     working_dir: /workspace/AIServer    # 进入容器即在 AIServer 目录
     networks:
       - maze-net
@@ -65,8 +65,7 @@ services:
       dockerfile: docker/Dockerfile.learner
     container_name: maze-learner
     volumes:
-      - .:/workspace
-      - model-data:/workspace/RL-Learner/models      # 模型导出共享卷
+      - .:/workspace                    # 源码 bind mount（models/ 直接写入宿主机项目目录）
     working_dir: /workspace/RL-Learner
     networks:
       - maze-net
@@ -82,6 +81,5 @@ networks:
   maze-net:
     driver: bridge
 
-# ---- 共享卷 ----
-volumes:
-  model-data:
+# ---- 共享卷（已移除 model-data，改用 bind mount 直接映射宿主机目录）----
+volumes: {}

@@ -1,5 +1,5 @@
-#include "grpc_client.h"
-#include "logger.h"
+#include "grpc/grpc_client.h"
+#include "log/logger.h"
 
 // ---- 创建 gRPC Channel 连接 AIServer ----
 bool GrpcClient::Connect(const std::string& host, int port) {

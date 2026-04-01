@@ -1,4 +1,4 @@
-#include "maze_reward.h"
+#include "ai/maze_reward.h"
 
 #include <cmath>
 #include <algorithm>

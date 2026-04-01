@@ -1,6 +1,6 @@
 #pragma once
 
-#include "session_manager.h"
+#include "session/session_manager.h"
 
 #include <vector>
 #include <string>

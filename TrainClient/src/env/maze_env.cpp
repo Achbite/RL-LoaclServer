@@ -1,6 +1,6 @@
-#include "maze_env.h"
-#include "config_loader.h"
-#include "logger.h"
+#include "env/maze_env.h"
+#include "config/config_loader.h"
+#include "log/logger.h"
 
 #include <cmath>
 #include <algorithm>

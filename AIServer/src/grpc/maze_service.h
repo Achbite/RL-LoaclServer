@@ -1,11 +1,11 @@
 #pragma once
 
 #include "maze.grpc.pb.h"
-#include "astar_solver.h"
-#include "config_loader.h"
-#include "session_manager.h"
-#include "onnx_inferencer.h"
-#include "maze_reward.h"
+#include "ai/astar_solver.h"
+#include "config/config_loader.h"
+#include "session/session_manager.h"
+#include "ai/onnx_inferencer.h"
+#include "ai/maze_reward.h"
 
 #include <grpcpp/grpcpp.h>
 #include <unordered_map>

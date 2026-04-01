@@ -3,16 +3,18 @@
 # 临时检查文件
 _check_output.txt
 
-# 模型文件（体积大，不纳入版本控制）
-models/*.onnx
-models/*.pt
-models/*.pth
-
-# 日志
-logs/*.log
-logs/*.csv
-AIServer/log/
+# ---- 运行时日志（精确到各子项目运行时目录，不影响 src/log/ 源码）----
+/TrainClient/log/
+/AIServer/log/
+/RL-Learner/logs/
 *.log
+
+# ---- 模型二进制文件（递归匹配所有层级）----
+**/*.onnx
+**/*.pt
+**/*.pth
+# 保留 .gitkeep 占位文件
+!**/.gitkeep
 
 # Python
 __pycache__/
@@ -20,7 +22,6 @@ __pycache__/
 *.pyo
 *.egg-info/
 dist/
-build/
 *.egg
 
 # C++ 构建产物
@@ -57,5 +58,3 @@ Thumbs.db
 .docker_build_hash_*
 
 .codebuddy
-log/
-logs/

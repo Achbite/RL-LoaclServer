@@ -22,12 +22,12 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from proto import maze_pb2_grpc
-from src.learner_service import LearnerServiceImpl
-from src.sample_buffer import SampleBuffer
-from src.ppo_trainer import PPOTrainer
-from src.logger import setup_logger
-from src.metrics_backend import create_backend
-from src.metrics_collector import MetricsCollector
+from src.grpc.learner_service import LearnerServiceImpl
+from src.training.sample_buffer import SampleBuffer
+from src.training.ppo_trainer import PPOTrainer
+from src.log.logger import setup_logger
+from src.metrics.metrics_backend import create_backend
+from src.metrics.metrics_collector import MetricsCollector
 
 # --- 全局退出标志 ---
 _running = True
@@ -44,9 +44,9 @@ def load_config(config_path: str) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-# ---- 清理模型缓存（训练启动时清理 P2P 目录下的旧模型）----
+# ---- 清理 P2P 分发目录（训练启动时清空旧 ONNX 模型）----
 def clean_model_cache(config: dict, logger):
-    """清理 P2P 模型目录下的旧模型文件"""
+    """清理 P2P 模型目录下的旧 ONNX 文件，防止 AIServer 加载过期模型"""
     p2p_dir = config.get("model", {}).get("p2p_dir", "models/p2p")
 
     if not os.path.exists(p2p_dir):
@@ -64,43 +64,87 @@ def clean_model_cache(config: dict, logger):
     else:
         logger.info("P2P 模型目录无缓存文件: %s", p2p_dir)
 
+# ---- 查找最新的历史 checkpoint ----
+def find_latest_checkpoint(save_dir: str, save_name: str) -> str:
+    """
+    在 save 目录中查找最新的 checkpoint 文件
+
+    查找规则：优先匹配 {save_name}.pt，其次匹配 {save_name}_final.pt
+
+    Args:
+        save_dir: checkpoint 保存目录
+        save_name: 模型文件名前缀
+    Returns:
+        最新 checkpoint 路径，不存在则返回空字符串
+    """
+    if not os.path.exists(save_dir):
+        return ""
+
+    # 优先查找主 checkpoint
+    main_ckpt = os.path.join(save_dir, f"{save_name}.pt")
+    if os.path.isfile(main_ckpt):
+        return main_ckpt
+
+    # 其次查找 final checkpoint
+    final_ckpt = os.path.join(save_dir, f"{save_name}_final.pt")
+    if os.path.isfile(final_ckpt):
+        return final_ckpt
+
+    return ""
+
 # ---- 初始化 PPOTrainer（统一模型管理）----
 def init_trainer(config: dict, model_path: str, logger) -> PPOTrainer:
     """
     初始化 PPOTrainer 并导出初始 ONNX 模型
 
+    模型加载优先级：
+        1. 命令行 --model_path 指定的 checkpoint（最高优先级）
+        2. save 目录中的历史 checkpoint（自动续训）
+        3. 随机初始化空模型
+
     Args:
         config: 完整配置字典
-        model_path: 本地 checkpoint 路径（为空则使用随机权重）
+        model_path: 命令行指定的 checkpoint 路径（为空则自动扫描 save 目录）
         logger: 日志实例
     Returns:
         PPOTrainer 实例
     """
     model_cfg = config.get("model", {})
-    export_dir = model_cfg.get("export_dir", "models/local")
+    save_dir = model_cfg.get("save_dir", "models/save")
     p2p_dir = model_cfg.get("p2p_dir", "models/p2p")
     save_name = model_cfg.get("save_name", "SaveModel")
 
-    os.makedirs(export_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
     os.makedirs(p2p_dir, exist_ok=True)
 
     # 构建 PPOTrainer（内部创建 ActorCritic 网络 + Adam 优化器）
     trainer = PPOTrainer(config)
 
-    # 加载 checkpoint（如果指定了路径）
+    # ---- 加载 checkpoint（按优先级）----
+    ckpt_path = ""
     if model_path and os.path.isfile(model_path):
-        logger.info("加载 checkpoint: %s", model_path)
-        trainer.load_checkpoint(model_path)
+        # 优先级 1：命令行指定
+        ckpt_path = model_path
+        logger.info("使用命令行指定的 checkpoint: %s", ckpt_path)
     elif model_path:
-        logger.warning("指定的 checkpoint 路径不存在: %s，使用随机权重", model_path)
+        logger.warning("命令行指定的 checkpoint 不存在: %s，尝试扫描 save 目录", model_path)
 
-    # 导出初始 ONNX 模型到 local 和 P2P 目录
-    local_onnx_path = os.path.join(export_dir, f"{save_name}.onnx")
+    if not ckpt_path:
+        # 优先级 2：自动扫描 save 目录
+        ckpt_path = find_latest_checkpoint(save_dir, save_name)
+        if ckpt_path:
+            logger.info("发现历史 checkpoint，自动续训: %s", ckpt_path)
+
+    if ckpt_path:
+        trainer.load_checkpoint(ckpt_path)
+        logger.info("checkpoint 加载完成，模型版本: v%d", trainer.model_version)
+    else:
+        logger.info("未找到历史 checkpoint，使用随机初始化空模型")
+
+    # 导出初始 ONNX 模型到 P2P 目录（供 AIServer 加载）
     p2p_onnx_path = os.path.join(p2p_dir, f"{save_name}.onnx")
-
-    trainer.export_onnx(local_onnx_path)
-    shutil.copy2(local_onnx_path, p2p_onnx_path)
-    logger.info("初始模型已同步到 P2P 目录: %s", p2p_onnx_path)
+    trainer.export_onnx(p2p_onnx_path)
+    logger.info("初始模型已导出到 P2P 目录: %s", p2p_onnx_path)
 
     return trainer
 
@@ -190,12 +234,13 @@ def main():
     consume_size = buffer_cfg.get("consume_batch_size", 256)
     consume_timeout = buffer_cfg.get("consume_timeout", 1.0)
     export_interval = model_cfg.get("export_interval", 10)
+    save_interval = model_cfg.get("save_interval", 10)
     save_name = model_cfg.get("save_name", "SaveModel")
-    export_dir = model_cfg.get("export_dir", "models/local")
+    save_dir = model_cfg.get("save_dir", "models/save")
     p2p_dir = model_cfg.get("p2p_dir", "models/p2p")
     pass_reward_threshold = train_cfg.get("pass_reward_threshold", 10.0)
 
-    local_onnx_path = os.path.join(export_dir, f"{save_name}.onnx")
+    checkpoint_path = os.path.join(save_dir, f"{save_name}.pt")
     p2p_onnx_path = os.path.join(p2p_dir, f"{save_name}.onnx")
 
     last_log_time = time.time()
@@ -203,7 +248,7 @@ def main():
 
     try:
         while _running:
-            # ---- 8.1 等待 trajectory 积累 ----
+            # ---- 8.1 等待 trajectory 片段（方案 A：TMax 即消费）----
             ready = sample_buffer.get_ready_trajectories(
                 min_samples=consume_size, timeout=consume_timeout
             )
@@ -216,9 +261,9 @@ def main():
                     if total_received > 0:
                         traj_stats = sample_buffer.trajectory_stats()
                         logger.info(
-                            "等待 trajectory | 累计接收: %d | 活跃 traj: %d | 待消费: %d",
-                            total_received, traj_stats["active_trajectories"],
-                            traj_stats["pending_completed"],
+                            "等待片段 | 累计接收: %d | 待消费片段: %d | 待消费样本: %d",
+                            total_received, traj_stats["pending_fragments"],
+                            traj_stats["active_samples"],
                         )
                     last_log_time = now
                 continue
@@ -321,20 +366,24 @@ def main():
                 metrics_collector.set_batch_episode_stats(batch_stats)
                 metrics_collector.on_train_step(train_step, stats, sample_buffer.get_stats())
 
-            # ---- 8.5 定期导出 ONNX 模型 ----
+            # ---- 8.5 定期导出 ONNX 模型到 P2P 目录 ----
             if train_step % export_interval == 0:
-                trainer.export_onnx(local_onnx_path)
-                shutil.copy2(local_onnx_path, p2p_onnx_path)
+                trainer.export_onnx(p2p_onnx_path)
                 service.update_model_version(trainer.model_version)
-                logger.info("模型已导出并同步到 P2P: v%d → %s", trainer.model_version, p2p_onnx_path)
+                logger.info("ONNX 模型已导出到 P2P: v%d → %s", trainer.model_version, p2p_onnx_path)
 
-            # ---- 8.6 定期打印缓存状态 ----
+            # ---- 8.6 定期保存 checkpoint 到 save 目录（断点续训）----
+            if train_step % save_interval == 0:
+                trainer.save_checkpoint(checkpoint_path)
+                logger.info("checkpoint 已保存: v%d → %s", trainer.model_version, checkpoint_path)
+
+            # ---- 8.7 定期打印缓存状态 ----
             now = time.time()
             if now - last_log_time >= 5.0:
                 traj_stats = sample_buffer.trajectory_stats()
                 logger.info(
-                    "缓存状态 | 活跃 traj: %d | 待消费: %d | 累计完成: %d | 累计接收: %d",
-                    traj_stats["active_trajectories"], traj_stats["pending_completed"],
+                    "缓存状态 | 待消费片段: %d | 待消费样本: %d | 累计完成 Episode: %d | 累计接收: %d",
+                    traj_stats["pending_fragments"], traj_stats["active_samples"],
                     traj_stats["total_completed"], sample_buffer.total_received(),
                 )
                 last_log_time = now
@@ -349,11 +398,10 @@ def main():
 
     # ---- 10. 保存最终 checkpoint + 导出最终模型 ----
     try:
-        checkpoint_path = os.path.join(export_dir, f"{save_name}_final.pt")
-        trainer.save_checkpoint(checkpoint_path)
-        trainer.export_onnx(local_onnx_path)
-        shutil.copy2(local_onnx_path, p2p_onnx_path)
-        logger.info("最终模型已保存: checkpoint=%s, onnx=%s", checkpoint_path, p2p_onnx_path)
+        final_ckpt_path = os.path.join(save_dir, f"{save_name}.pt")
+        trainer.save_checkpoint(final_ckpt_path)
+        trainer.export_onnx(p2p_onnx_path)
+        logger.info("最终模型已保存: checkpoint=%s, onnx=%s", final_ckpt_path, p2p_onnx_path)
     except Exception as e:
         logger.error("最终模型保存失败: %s", str(e))
 
@@ -367,7 +415,8 @@ def main():
     logger.info("  累计接收样本: %d", stats["total_received"])
     logger.info("  累计消费样本: %d", stats["total_consumed"])
     logger.info("  峰值缓冲区大小: %d", stats["peak_size"])
-    logger.info("  累计完成 trajectory: %d", stats.get("total_completed", 0))
+    logger.info("  累计接收片段: %d", stats.get("total_fragments", 0))
+    logger.info("  累计完成 Episode: %d", stats.get("total_completed", 0))
     logger.info("  拥塞告警次数: %d", stats["warn_count"])
     logger.info("  样本丢失: %d", stats["dropped"])
     if stats["warn_count"] > 0:

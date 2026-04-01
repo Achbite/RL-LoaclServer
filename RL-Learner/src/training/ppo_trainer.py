@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 
-from src.logger import setup_logger
+from src.log.logger import setup_logger
 
 
 # ---- Actor-Critic 独立编码器网络 ----
