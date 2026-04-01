@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # C++ Protobuf + gRPC 代码生成脚本
-# 用法：bash Client/proto/gen_proto.sh
+# 用法：bash TrainClient/proto/gen_proto.sh
 # 运行环境：Docker 容器（Ubuntu 24.04）
 # ============================================================================
 
@@ -24,7 +24,7 @@ if [ -z "${GRPC_PLUGIN}" ]; then
     exit 1
 fi
 
-# ---- 1. 生成 Client 端 C++ 代码（Protobuf + gRPC）----
+# ---- 1. 生成 TrainClient 端 C++ 代码（Protobuf + gRPC）----
 CLIENT_OUT="${SCRIPT_DIR}/../src/proto_gen"
 mkdir -p "${CLIENT_OUT}"
 
@@ -35,7 +35,7 @@ protoc \
     --plugin=protoc-gen-grpc="${GRPC_PLUGIN}" \
     "${PROTO_FILE}"
 
-echo "[Client] C++ protobuf + gRPC 代码已生成到: ${CLIENT_OUT}"
+echo "[TrainClient] C++ protobuf + gRPC 代码已生成到: ${CLIENT_OUT}"
 
 # ---- 2. 生成 AIServer 端 C++ 代码（Protobuf + gRPC）----
 AISERVER_OUT="${SCRIPT_DIR}/../../AIServer/src/proto_gen"

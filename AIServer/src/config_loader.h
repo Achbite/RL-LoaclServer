@@ -29,6 +29,8 @@ struct LearnerConfig {
     int         port              = 9003;            // Learner 端口
     int         send_interval     = 32;              // 样本发送间隔（帧）
     int         sample_batch_size = 128;             // 样本批量发送大小
+    int         send_timeout      = 10;              // 样本发送超时（秒），gRPC 背压等待上限
+    int         max_retries       = 3;               // 发送失败最大重试次数（0=不重试）
 };
 
 // ---- AIServer 完整配置 ----

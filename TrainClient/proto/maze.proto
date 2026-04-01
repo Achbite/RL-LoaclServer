@@ -1,6 +1,6 @@
 // ============================================================================
 // 迷宫训练框架通信协议
-// 文件位置：Client/proto/maze.proto（唯一源头）
+// 文件位置：TrainClient/proto/maze.proto（唯一源头）
 // 共享方式：AIServer 构建时复制此文件，Learner 通过 grpc_tools 生成 Python 绑定
 // ============================================================================
 
@@ -21,17 +21,18 @@ message Vec2 {
 }
 
 // ============================================================================
-// Client ↔ AIServer 消息（gRPC）
+// TrainClient ↔ AIServer 消息（gRPC）
 // ============================================================================
 
 // ---- 初始化 ----
 
-// 初始化请求：Client 启动时发送，携带地图基本信息
+// 初始化请求：TrainClient 启动时发送，携带地图基本信息
 message InitReq {
-    int32 agent_num = 1; // Agent 数量
-    Vec2  map_size  = 2; // 地图尺寸（宽, 高）
-    Vec2  start_pos = 3; // 起点坐标
-    Vec2  end_pos   = 4; // 终点坐标
+    int32 agent_num  = 1; // Agent 数量
+    Vec2  map_size   = 2; // 地图尺寸（宽, 高）
+    Vec2  start_pos  = 3; // 起点坐标
+    Vec2  end_pos    = 4; // 终点坐标
+    int32 session_id = 5; // 会话 ID（并行 Episode 隔离，单 Episode 模式默认 0）
 }
 
 // 初始化响应
@@ -48,10 +49,11 @@ message AgentState {
     bool  is_done  = 3; // 是否已结束（到达终点或超时）
 }
 
-// 帧状态上报请求：Client 每帧发送所有 Agent 的状态
+// 帧状态上报请求：TrainClient 每帧发送所有 Agent 的状态
 message UpdateReq {
-    repeated AgentState agents   = 1; // 所有 Agent 的状态
-    int32               frame_id = 2; // 当前帧号（从 0 开始递增）
+    repeated AgentState agents     = 1; // 所有 Agent 的状态
+    int32               frame_id   = 2; // 当前帧号（从 0 开始递增）
+    int32               session_id = 3; // 会话 ID（并行 Episode 隔离）
 }
 
 // ---- 动作下发 ----
@@ -69,9 +71,10 @@ message UpdateRsp {
 
 // ---- Episode 结束 ----
 
-// Episode 结束通知：所有 Agent 都 done 后 Client 发送
+// Episode 结束通知：所有 Agent 都 done 后 TrainClient 发送
 message EpisodeEndReq {
     int32 episode_id = 1; // Episode 编号
+    int32 session_id = 2; // 会话 ID（并行 Episode 隔离）
 }
 
 // Episode 结束确认
@@ -98,9 +101,11 @@ message Sample {
 // ---- 样本批次 ----
 // 每 TMax=32 帧或 Episode 结束时，AIServer 打包发送
 message SampleBatch {
-    int32           episode_id = 1; // Episode 编号
-    int32           agent_id   = 2; // Agent 编号
-    repeated Sample samples    = 3; // 帧样本序列
+    int32           episode_id     = 1; // Episode 编号
+    int32           agent_id       = 2; // Agent 编号
+    repeated Sample samples        = 3; // 帧样本序列
+    bool            is_episode_end = 4; // true=Episode 结束, false=TMax 截断
+    int32           session_id     = 5; // 来源会话 ID
 }
 
 // ---- 样本发送响应 ----
@@ -113,15 +118,15 @@ message SampleResponse {
 // gRPC 服务定义
 // ============================================================================
 
-// Client↔AIServer gRPC 服务：处理初始化、帧同步、Episode 生命周期
+// TrainClient↔AIServer gRPC 服务：处理初始化、帧同步、Episode 生命周期
 service MazeService {
-    // 初始化：Client 启动时调用，注册 Agent 和地图信息
+    // 初始化：TrainClient 启动时调用，注册 Agent 和地图信息
     rpc Init (InitReq) returns (InitRsp);
 
-    // 帧同步：Client 每帧上报状态，AIServer 返回动作
+    // 帧同步：TrainClient 每帧上报状态，AIServer 返回动作
     rpc Update (UpdateReq) returns (UpdateRsp);
 
-    // Episode 结束：所有 Agent 都 done 后 Client 调用
+    // Episode 结束：所有 Agent 都 done 后 TrainClient 调用
     rpc EndEpisode (EpisodeEndReq) returns (EpisodeEndRsp);
 }
 

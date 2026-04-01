@@ -36,12 +36,21 @@ struct VizConfig {
     int         server_port = 9004;              // 可视化 HTTP 服务端口，浏览器通过此端口访问回放
 };
 
+// ---- 并行训练参数（train_main 使用）----
+struct TrainConfig {
+    int thread_count       = 4;         // 工作线程数，即同时并行运行的 Episode 数
+    int episode_pool_size  = 0;         // 对象池大小，0=自动等于 thread_count
+    int max_episodes       = 1000;      // 总训练 Episode 数
+    int log_summary_interval = 10;      // 摘要日志间隔（每完成 N 个 Episode 打印一次汇总）
+};
+
 // ---- 客户端完整配置 ----
 struct ClientConfig {
     RunConfig     run;
     EnvConfig     env;
     NetworkConfig network;
     VizConfig     viz;
+    TrainConfig   train;
 };
 
 // ---- 配置加载器 ----

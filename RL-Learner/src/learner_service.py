@@ -35,9 +35,10 @@ class LearnerServiceImpl(maze_pb2_grpc.LearnerServiceServicer):
             episode_id, agent_id, num_samples,
         )
 
-        # 将 protobuf Sample 转换为 dict 列表存入缓存
+        # 将 protobuf Sample 转换为 dict 列表，批量推入缓存
+        batch = []
         for sample in request.samples:
-            sample_dict = {
+            batch.append({
                 "episode_id": episode_id,
                 "agent_id": agent_id,
                 "obs": list(sample.obs),
@@ -48,8 +49,17 @@ class LearnerServiceImpl(maze_pb2_grpc.LearnerServiceServicer):
                 "advantage": sample.advantage,
                 "td_return": sample.td_return,
                 "mask": sample.mask,
-            }
-            self._buffer.push(sample_dict)
+            })
+        self._buffer.push_batch(batch)
+
+        # 拥塞检测：缓冲区超过告警水位线时打印警告
+        if self._buffer.check_congestion():
+            buf_size = self._buffer.size()
+            self._logger.warning(
+                "⚠ 缓冲区拥塞: 当前 %d 个样本，超过告警水位线，"
+                "Learner 消费速度可能跟不上 AIServer 样本产生速度",
+                buf_size,
+            )
 
         # 构造响应
         response = maze_pb2.SampleResponse()

@@ -1,13 +1,13 @@
 #!/bin/bash
 # ============================================================================
-# Client 编译脚本（Docker 容器内执行）
-# 用法：cd /workspace/Client && ./build.sh
+# TrainClient 编译脚本（Docker 容器内执行）
+# 用法：cd /workspace/TrainClient && ./build.sh
 # ============================================================================
 
 set -e
 
 echo "============================================"
-echo "  迷宫训练框架 - Client 编译"
+echo "  迷宫训练框架 - TrainClient 编译"
 echo "============================================"
 echo ""
 
@@ -44,5 +44,7 @@ cmake --build "${BUILD_DIR}" --parallel
 
 echo ""
 echo "============================================"
-echo "[Build] 编译完成！可执行文件: ${BUILD_DIR}/maze_client"
+echo "[Build] 编译完成！"
+echo "[Build]   单 Episode 调试: ${BUILD_DIR}/maze_client"
+echo "[Build]   并行训练模式:   ${BUILD_DIR}/maze_train"
 echo "============================================"

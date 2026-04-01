@@ -11,8 +11,9 @@ server:
 
 # --- 样本缓存参数 ---
 buffer:
-  max_size: 4096                  # 样本缓存最大容量（超出后丢弃最旧样本）
+  warn_threshold: 8192            # 拥塞告警水位线，缓冲区样本数超过此值时打印告警（无界队列，不丢弃）
   consume_batch_size: 256         # 每次训练消费的样本数量
+  consume_timeout: 1.0            # 消费等待超时（秒），无数据时阻塞等待的上限
 
 # --- 训练参数（Phase 3B 启用，当前仅占位）---
 training:

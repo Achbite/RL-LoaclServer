@@ -3,7 +3,8 @@
 # 迷宫训练框架 - 一键 Docker 开发环境入口
 # 用法：bash docker_dev.sh <服务名> [选项]
 # 服务名：
-#   client       进入 Client 容器（交互式 bash）
+#   client       进入 TrainClient 容器（交互式 bash）
+#   train        进入 TrainClient 并行训练容器（交互式 bash）
 #   aiserver     启动 AIServer 后台服务 + 进入容器
 #   learner      启动 Learner 后台服务 + 进入容器
 # 选项：
@@ -34,12 +35,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # --- 服务名映射 ---
 declare -A SERVICE_MAP=(
     ["client"]="maze-client"
+    ["train"]="maze-train"
     ["aiserver"]="maze-aiserver"
     ["learner"]="maze-learner"
 )
 
 declare -A DOCKERFILE_MAP=(
     ["client"]="docker/Dockerfile.client"
+    ["train"]="docker/Dockerfile.client"
     ["aiserver"]="docker/Dockerfile.aiserver"
     ["learner"]="docker/Dockerfile.learner"
 )
@@ -49,7 +52,8 @@ usage() {
     echo "用法: bash docker_dev.sh <服务名> [选项]"
     echo ""
     echo "服务名:"
-    echo "  client       进入 Client 容器（交互式 bash）"
+    echo "  client       进入 TrainClient 容器（交互式 bash，单 Episode 调试）"
+    echo "  train        进入 TrainClient 并行训练容器（交互式 bash）"
     echo "  aiserver     启动 AIServer 后台服务 + 进入容器"
     echo "  learner      启动 Learner 后台服务 + 进入容器"
     echo ""
@@ -284,15 +288,26 @@ case "$TARGET" in
         docker compose exec maze-aiserver bash
         ;;
     client)
-        # Client：交互式 bash（临时容器，--service-ports 映射 docker-compose.yml 中定义的端口）
-        info "--- 进入 Client 容器交互式 bash ---"
+        # TrainClient：交互式 bash（临时容器，--service-ports 映射 docker-compose.yml 中定义的端口）
+        info "--- 进入 TrainClient 容器交互式 bash ---"
         info "退出容器: 输入 exit 或按 Ctrl+D"
         echo ""
         info "编译项目: ./build.sh"
-        info "运行项目: ./run.sh"
+        info "单 Episode 调试: ./run.sh"
+        info "并行训练: ./run_train.sh"
         info "可视化服务: http://localhost:9004（run.sh 启动后自动挂载后台）"
         echo ""
         docker compose run --rm --service-ports maze-client bash
+        ;;
+    train)
+        # TrainClient 并行训练：交互式 bash
+        info "--- 进入 TrainClient 并行训练容器交互式 bash ---"
+        info "退出容器: 输入 exit 或按 Ctrl+D"
+        echo ""
+        info "编译项目: ./build.sh"
+        info "并行训练: ./run_train.sh"
+        echo ""
+        docker compose run --rm maze-train bash
         ;;
     learner)
         # Learner：后台启动服务 + 进入交互式 bash

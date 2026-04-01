@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
-# Client 运行脚本（Docker 容器内执行）
-# 用法：cd /workspace/Client && ./run.sh
+# TrainClient 运行脚本（Docker 容器内执行）
+# 用法：cd /workspace/TrainClient && ./run.sh
 # 前提：已通过 ./build.sh 完成编译
 # ============================================================================
 
@@ -20,11 +20,11 @@ if [ ! -f "${EXECUTABLE}" ]; then
 fi
 
 echo "============================================"
-echo "  迷宫训练框架 - Client 启动"
+echo "  迷宫训练框架 - TrainClient 启动"
 echo "============================================"
 echo ""
 
-# ---- 切换到 Client 目录（配置文件使用相对路径）----
+# ---- 切换到 TrainClient 目录（配置文件使用相对路径）----
 cd "${SCRIPT_DIR}"
 
 # ---- 自动启动可视化 HTTP 服务（后台运行，不占用终端）----
@@ -50,7 +50,7 @@ fi
 echo ""
 
 # ---- 启动 ----
-echo "[Run] 启动 Client..."
+echo "[Run] 启动 TrainClient..."
 echo "[Run] 配置文件: ${CONFIG_PATH}"
 echo ""
 

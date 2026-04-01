@@ -63,3 +63,12 @@ bool GrpcClient::EndEpisode(const maze::EpisodeEndReq& req, maze::EpisodeEndRsp&
     }
     return true;
 }
+
+// ---- 断开连接，释放 Channel 和 Stub ----
+void GrpcClient::Disconnect() {
+    if (!connected_) return;
+
+    stub_.reset();
+    channel_.reset();
+    connected_ = false;
+}

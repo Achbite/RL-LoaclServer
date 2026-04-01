@@ -19,6 +19,7 @@ set(SOURCES
     src/maze_service.cpp
     src/astar_solver.cpp
     src/config_loader.cpp
+    src/session_manager.cpp
 )
 
 # --- Proto 生成文件（由 gen_proto.sh 预先生成）---

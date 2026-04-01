@@ -161,6 +161,17 @@ out_config.network.server_port = SafeInt(FindValue(entries, "network", "server_p
     out_config.viz.interval    = SafeInt(FindValue(entries, "viz", "interval"), 1);
     out_config.viz.server_port = SafeInt(FindValue(entries, "viz", "server_port"), 9004);
 
+    // --- train ---
+    out_config.train.thread_count        = SafeInt(FindValue(entries, "train", "thread_count"),        4);
+    out_config.train.episode_pool_size   = SafeInt(FindValue(entries, "train", "episode_pool_size"),   0);
+    out_config.train.max_episodes        = SafeInt(FindValue(entries, "train", "max_episodes"),        1000);
+    out_config.train.log_summary_interval = SafeInt(FindValue(entries, "train", "log_summary_interval"), 10);
+
+    // episode_pool_size=0 时自动等于 thread_count
+    if (out_config.train.episode_pool_size <= 0) {
+        out_config.train.episode_pool_size = out_config.train.thread_count;
+    }
+
     LOG_INFO("Config", "run: agent_num=%d, max_episodes=%d, log_interval=%d",
              out_config.run.agent_num, out_config.run.max_episodes, out_config.run.log_interval);
     LOG_INFO("Config", "env: map=%.0fx%.0f, start=(%.0f,%.0f), end=(%.0f,%.0f)",
@@ -173,6 +184,9 @@ out_config.network.server_port = SafeInt(FindValue(entries, "network", "server_p
              out_config.viz.enabled ? "true" : "false",
              out_config.viz.output_dir.c_str(), out_config.viz.interval,
              out_config.viz.server_port);
+    LOG_INFO("Config", "train: threads=%d, pool=%d, max_episodes=%d, summary_interval=%d",
+             out_config.train.thread_count, out_config.train.episode_pool_size,
+             out_config.train.max_episodes, out_config.train.log_summary_interval);
 
     return true;
 }

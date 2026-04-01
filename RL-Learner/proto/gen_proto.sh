@@ -6,7 +6,7 @@
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROTO_SRC="${SCRIPT_DIR}/../../Client/proto/maze.proto"
+PROTO_SRC="${SCRIPT_DIR}/../../TrainClient/proto/maze.proto"
 PYTHON_OUT="${SCRIPT_DIR}"
 
 # 生成 Python protobuf + gRPC 绑定

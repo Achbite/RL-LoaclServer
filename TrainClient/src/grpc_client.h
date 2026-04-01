@@ -14,6 +14,7 @@ public:
 
     // 连接管理
     bool Connect(const std::string& host, int port);    // 创建 gRPC Channel 连接 AIServer
+    void Disconnect();                                   // 断开连接，释放 Channel 和 Stub
     bool IsConnected() const;                            // 连接状态查询
 
     // RPC 调用（对应 MazeService 的三个方法）

@@ -1,13 +1,13 @@
 # ============================================================================
 # 迷宫训练框架 - Docker Compose 编排（开发模式）
 # 用法：
-#   AIServer：docker compose up -d maze-aiserver（后台启动）
-#   Client：  docker compose run --rm maze-client bash（交互式）
-#   Learner： docker compose up -d maze-learner（后台启动）
+#   AIServer：    docker compose up -d maze-aiserver（后台启动）
+#   TrainClient： docker compose run --rm maze-client bash（交互式）
+#   Learner：     docker compose up -d maze-learner（后台启动）
 # ============================================================================
 
 services:
-  # ---- Client：迷宫环境模拟器 ----
+  # ---- TrainClient：迷宫环境模拟器 ----
   maze-client:
     build:
       context: .
@@ -15,7 +15,7 @@ services:
     container_name: maze-client
     volumes:
       - .:/workspace                    # 源码 bind mount
-    working_dir: /workspace/Client      # 进入容器即在 Client 目录
+    working_dir: /workspace/TrainClient  # 进入容器即在 TrainClient 目录
     networks:
       - maze-net
     ports:
@@ -41,6 +41,20 @@ services:
     stdin_open: true
     tty: true
     command: ["bash", "-c", "echo 'AIServer 容器已就绪' && sleep infinity"]
+
+  # ---- TrainClient 并行训练模式 ----
+  maze-train:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client    # 复用 TrainClient 镜像（同一套 C++ 工具链）
+    container_name: maze-train
+    volumes:
+      - .:/workspace
+    working_dir: /workspace/TrainClient
+    networks:
+      - maze-net
+    stdin_open: true
+    tty: true
 
   # ---- Learner：强化学习训练器 ----
   maze-learner:

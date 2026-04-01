@@ -146,6 +146,8 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
     out_config.learner.port              = SafeInt(FindValue(entries, "learner", "port"),              9003);
     out_config.learner.send_interval     = SafeInt(FindValue(entries, "learner", "send_interval"),     32);
     out_config.learner.sample_batch_size = SafeInt(FindValue(entries, "learner", "sample_batch_size"), 128);
+    out_config.learner.send_timeout      = SafeInt(FindValue(entries, "learner", "send_timeout"),      10);
+    out_config.learner.max_retries       = SafeInt(FindValue(entries, "learner", "max_retries"),       3);
 
     // --- 运行模式名称映射 ---
     const char* mode_names[] = {"未知", "训练", "推理", "A*测试"};
@@ -162,11 +164,13 @@ bool LoadServerConfig(const std::string& yaml_path, AIServerConfig& out_config) 
              out_config.model.local_dir.c_str(),
              out_config.model.p2p_dir.c_str(),
              out_config.model.poll_interval);
-    LOG_INFO("Config", "learner: %s:%d, interval=%d, batch_size=%d",
+    LOG_INFO("Config", "learner: %s:%d, interval=%d, batch_size=%d, timeout=%ds, retries=%d",
              out_config.learner.host.c_str(),
              out_config.learner.port,
              out_config.learner.send_interval,
-             out_config.learner.sample_batch_size);
+             out_config.learner.sample_batch_size,
+             out_config.learner.send_timeout,
+             out_config.learner.max_retries);
 
     return true;
 }

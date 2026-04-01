@@ -70,7 +70,7 @@ static std::string BuildVizJson(const MazeEnv& env, const ClientConfig& cfg,
 
 int main(int argc, char* argv[]) {
     std::printf("============================================\n");
-    std::printf("  迷宫训练框架 - Client (Demo)\n");
+    std::printf("  迷宫训练框架 - TrainClient (Demo)\n");
     std::printf("============================================\n\n");
 
     // ---- 0. 加载配置 ----

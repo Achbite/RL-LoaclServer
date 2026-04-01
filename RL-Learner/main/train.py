@@ -217,9 +217,9 @@ def main():
         return
 
     # ---- 5. 创建样本缓存 ----
-    max_size = buffer_cfg.get("max_size", 4096)
-    sample_buffer = SampleBuffer(max_size=max_size)
-    logger.info("样本缓存已创建，最大容量: %d", max_size)
+    warn_threshold = buffer_cfg.get("warn_threshold", 8192)
+    sample_buffer = SampleBuffer(warn_threshold=warn_threshold)
+    logger.info("样本缓存已创建，无界队列（零丢弃），拥塞告警水位线: %d", warn_threshold)
 
     # ---- 6. 启动 gRPC 服务 ----
     listen_port = server_cfg.get("listen_port", 9003)
@@ -236,32 +236,47 @@ def main():
     logger.info("等待 AIServer 发送样本...")
 
     # ---- 7. 主循环（Phase 3A：接收样本并统计，训练逻辑为空）----
-    last_total = 0
+    consume_size = buffer_cfg.get("consume_batch_size", 256)
+    consume_timeout = buffer_cfg.get("consume_timeout", 1.0)
+    last_log_time = time.time()
     try:
         while _running:
-            time.sleep(5.0)
+            # 条件变量等待：有样本时立即唤醒，无样本时阻塞等待（替代 sleep 轮询）
+            consumed = sample_buffer.consume(consume_size, timeout=consume_timeout)
 
-            # 定期打印样本缓存状态
-            buf_size = sample_buffer.size()
-            total_received = sample_buffer.total_received()
+            if consumed:
+                logger.info("[训练占位] 消费 %d 个样本（未执行实际训练）", len(consumed))
 
-            if total_received > last_total:
-                logger.info("样本缓存: %d / %d | 累计接收: %d (+%d)",
-                            buf_size, max_size, total_received, total_received - last_total)
-                last_total = total_received
-
-                # 训练逻辑占位：消费样本但不训练（验证数据流）
-                consume_size = buffer_cfg.get("consume_batch_size", 256)
-                if buf_size >= consume_size:
-                    consumed = sample_buffer.consume(consume_size)
-                    logger.info("[训练占位] 消费 %d 个样本（未执行实际训练）", len(consumed))
-            elif total_received > 0:
-                logger.info("样本缓存: %d / %d | 累计接收: %d（等待新样本）",
-                            buf_size, max_size, total_received)
+            # 定期打印缓存状态（每 5 秒）
+            now = time.time()
+            if now - last_log_time >= 5.0:
+                buf_size = sample_buffer.size()
+                total_received = sample_buffer.total_received()
+                total_consumed = sample_buffer.total_consumed()
+                if total_received > 0:
+                    logger.info("样本缓存: %d | 累计接收: %d | 累计消费: %d",
+                                buf_size, total_received, total_consumed)
+                last_log_time = now
     except KeyboardInterrupt:
         pass
 
-    # ---- 8. 优雅退出 ----
+    # ---- 8. 训练结束汇总 ----
+    stats = sample_buffer.get_stats()
+    logger.info("============================================")
+    logger.info("  训练结束汇总")
+    logger.info("============================================")
+    logger.info("  累计接收样本: %d", stats["total_received"])
+    logger.info("  累计消费样本: %d", stats["total_consumed"])
+    logger.info("  峰值缓冲区大小: %d", stats["peak_size"])
+    logger.info("  拥塞告警次数: %d", stats["warn_count"])
+    logger.info("  样本丢失: %d", stats["dropped"])
+    if stats["warn_count"] > 0:
+        logger.warning("⚠ 检测到 %d 次缓冲区拥塞（告警水位线 %d），"
+                       "AIServer 样本产生速度超过 Learner 消费速度",
+                       stats["warn_count"], stats["warn_threshold"])
+        logger.warning("  建议：增加 Learner 训练并行度 或 减少 AIServer 并行 Episode 数")
+
+    # ---- 9. 优雅退出 ----
     logger.info("正在关闭 gRPC 服务...")
     grpc_server.stop(grace=5)
     logger.info("RL-Learner 已停止")

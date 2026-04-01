@@ -1,5 +1,5 @@
 # ============================================================================
-# Client - 迷宫环境模拟器 Docker 构建文件
+# TrainClient - 迷宫环境模拟器 Docker 构建文件
 # 基础镜像：Ubuntu 24.04（与 WSL 保持一致）
 # 用法：docker compose up maze-client（推荐）
 #       docker build -f docker/Dockerfile.client -t maze-client .（手动）
@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# --- 工作目录（进入容器即在 Client 目录）---
-WORKDIR /workspace/Client
+# --- 工作目录（进入容器即在 TrainClient 目录）---
+WORKDIR /workspace/TrainClient
 
 # --- 默认入口：编译并运行 Client ---
 CMD ["./build.sh"]

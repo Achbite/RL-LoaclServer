@@ -16,7 +16,7 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 
 # ---- 1. 生成 Proto 代码 ----
 echo "[Build] 生成 Protobuf + gRPC 代码..."
-bash /workspace/Client/proto/gen_proto.sh
+bash /workspace/TrainClient/proto/gen_proto.sh
 
 # ---- 2. CMake 配置 ----
 echo ""
