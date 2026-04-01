@@ -9,7 +9,8 @@
 #include <atomic>
 
 // ---- ONNX 推理封装（线程安全，支持模型热更新）----
-// 使用 shared_ptr<Ort::Session> + 原子替换实现无锁读取、互斥更新。
+// 使用 shared_ptr<Ort::Session> + std::atomic_load/store 实现真正的原子读写。
+// LoadModel() 通过 atomic_store 更新 session_，Infer() 通过 atomic_load 读取。
 // 多个并行 Episode 可同时调用 Infer()，不需要外部加锁。
 
 class OnnxInferencer {
@@ -36,7 +37,7 @@ private:
     Ort::Env env_;                                  // ONNX Runtime 环境（全局唯一）
     Ort::SessionOptions session_options_;            // 会话选项
 
-    std::shared_ptr<Ort::Session> session_;          // 当前推理会话（原子替换）
+    std::shared_ptr<Ort::Session> session_;          // 当前推理会话（通过 atomic_load/store 保证线程安全）
     mutable std::mutex load_mutex_;                  // 模型加载互斥锁
     std::atomic<bool> loaded_{false};                // 是否已加载模型
     std::string current_model_path_;                 // 当前模型路径

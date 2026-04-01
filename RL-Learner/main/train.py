@@ -113,6 +113,7 @@ def init_trainer(config: dict, model_path: str, logger) -> PPOTrainer:
     save_dir = model_cfg.get("save_dir", "models/save")
     p2p_dir = model_cfg.get("p2p_dir", "models/p2p")
     save_name = model_cfg.get("save_name", "SaveModel")
+    checkpoint_enabled = model_cfg.get("checkpoint_enabled", False)
 
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(p2p_dir, exist_ok=True)
@@ -123,23 +124,25 @@ def init_trainer(config: dict, model_path: str, logger) -> PPOTrainer:
     # ---- 加载 checkpoint（按优先级）----
     ckpt_path = ""
     if model_path and os.path.isfile(model_path):
-        # 优先级 1：命令行指定
+        # 优先级 1：命令行 --model_path 指定（最高优先级，不受 checkpoint_enabled 开关影响）
         ckpt_path = model_path
         logger.info("使用命令行指定的 checkpoint: %s", ckpt_path)
     elif model_path:
-        logger.warning("命令行指定的 checkpoint 不存在: %s，尝试扫描 save 目录", model_path)
+        logger.warning("命令行指定的 checkpoint 不存在: %s", model_path)
 
-    if not ckpt_path:
-        # 优先级 2：自动扫描 save 目录
+    if not ckpt_path and checkpoint_enabled:
+        # 优先级 2：checkpoint_enabled=true 时，自动扫描 save 目录加载历史保存点
         ckpt_path = find_latest_checkpoint(save_dir, save_name)
         if ckpt_path:
-            logger.info("发现历史 checkpoint，自动续训: %s", ckpt_path)
+            logger.info("checkpoint 已启用，发现历史保存点，自动续训: %s", ckpt_path)
+    elif not ckpt_path and not checkpoint_enabled:
+        logger.info("checkpoint 加载已关闭（checkpoint_enabled=false），跳过历史保存点扫描")
 
     if ckpt_path:
         trainer.load_checkpoint(ckpt_path)
         logger.info("checkpoint 加载完成，模型版本: v%d", trainer.model_version)
     else:
-        logger.info("未找到历史 checkpoint，使用随机初始化空模型")
+        logger.info("使用随机初始化空模型")
 
     # 导出初始 ONNX 模型到 P2P 目录（供 AIServer 加载）
     p2p_onnx_path = os.path.join(p2p_dir, f"{save_name}.onnx")

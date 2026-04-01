@@ -20,8 +20,8 @@ bool OnnxInferencer::LoadModel(const std::string& model_path) {
         auto new_session = std::make_shared<Ort::Session>(
             env_, model_path.c_str(), session_options_);
 
-        // 原子替换：读取端通过 shared_ptr 拷贝访问，无需加锁
-        session_ = new_session;
+        // 原子替换：使用 atomic_store 保证与 Infer() 端 atomic_load 的线程安全
+        std::atomic_store(&session_, new_session);
         current_model_path_ = model_path;
         loaded_.store(true);
 
@@ -37,8 +37,8 @@ bool OnnxInferencer::LoadModel(const std::string& model_path) {
 // ---- 推理（线程安全，无锁读取）----
 bool OnnxInferencer::Infer(const std::vector<float>& obs, int obs_dim,
                            std::vector<float>& action_probs, float& value) {
-    // 拷贝 shared_ptr（原子操作，无锁）
-    auto session = session_;
+    // 原子读取 shared_ptr（与 LoadModel 端 atomic_store 配合，保证线程安全）
+    auto session = std::atomic_load(&session_);
     if (!session) {
         return false;
     }
