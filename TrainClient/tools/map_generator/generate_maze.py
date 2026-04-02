@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-随机迷宫地图生成器（边墙模型 Wall-Edge Model）
+随机迷宫地图生成器（混合模型 Room & Corridor）
 
 使用 DFS（深度优先搜索）算法在 N×N 网格上生成随机迷宫。
 墙壁是格子之间的边界线段，不占据格子空间——所有格子都是可通行的"房间"，
 DFS 打通 = 移除两个相邻格子之间的边界线段。
 
-设计理念（参考 Roguelike 游戏标准做法）：
-  - 每个格子都是可通行空间（500cm × 500cm）
-  - 墙壁是格子边界上的细线段（thickness=10cm）
-  - DFS 生成完美迷宫后，额外打通部分墙壁增加多路径
-  - 合并连续的水平/垂直边墙为长线段，减少墙壁数量
-  - 输出格式与 test_maze.json 完全兼容
+设计理念（Room & Corridor 混合模型）：
+  - 每个 DFS 房间展开为 K×K 的可通行区域（K=room_size，可配置）
+  - 墙壁宽度固定为 1 格，房间之间通过 K 格宽走廊连通
+  - 房间内可随机放置障碍物（柱子/口袋），密度可配置
+  - 八向移动在宽敞房间内有实际意义（对角线可有效缩短路径）
+  - 合并连续的水平/垂直 blocked 格子为长线段，减少墙壁数量
+  - 输出格式与 Client 端 AABB 碰撞检测完全兼容
 
 自动行为：
   - 不指定 --seed 时自动随机生成种子
@@ -266,72 +267,138 @@ def clear_safe_zone(edge_set, grid_dim, cx, cy, radius=2):
                 edge_set.remove_wall(x, y, x, y + 1)
 
 
-def clear_blocked_safe_zone(blocked, grid_dim, gx, gy, radius=1):
+def clear_blocked_safe_zone(blocked, out_dim, gx, gy, radius=1):
     """
     清除 blocked 网格中指定坐标周围 (2*radius+1)×(2*radius+1) 范围内的所有 blocked 格子
 
-    用于确保起终点在输出的 2N+1 blocked 网格中周围有足够空间。
+    用于确保起终点在输出网格中周围有足够空间。
 
     参数：
         blocked: 网格 blocked 数组
-        grid_dim: 网格维度
+        out_dim: 输出网格维度
         gx, gy: 中心网格坐标
         radius: 清除半径（默认 1，即 3×3 范围）
     """
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
             nx, ny = gx + dx, gy + dy
-            if 0 <= nx < grid_dim and 0 <= ny < grid_dim:
+            if 0 <= nx < out_dim and 0 <= ny < out_dim:
                 blocked[ny][nx] = False
+
+
+def add_room_obstacles(blocked, grid_dim, room_size, density, rng,
+                       start_rx, start_ry, end_rx, end_ry, safe_radius=1):
+    """
+    在房间内随机放置障碍物，形成口袋/柱子结构
+
+    遍历每个 DFS 房间的 room_size × room_size 区域，按概率将部分格子标记为 blocked。
+    起终点所在房间及其安全半径内的房间不放置障碍物。
+
+    参数：
+        blocked: 输出网格 blocked 数组
+        grid_dim: DFS 房间维度 N
+        room_size: 每个房间的格子数
+        density: 障碍物密度（0~1），每个房间内格子被标记为障碍的概率
+        rng: random.Random 实例
+        start_rx, start_ry: 起点所在的房间坐标
+        end_rx, end_ry: 终点所在的房间坐标
+        safe_radius: 起终点安全半径（房间坐标），此范围内的房间不放障碍
+    """
+    if density <= 0:
+        return
+
+    stride = room_size + 1
+
+    for ry in range(grid_dim):
+        for rx in range(grid_dim):
+            # 跳过起终点安全区内的房间
+            if (abs(rx - start_rx) <= safe_radius and abs(ry - start_ry) <= safe_radius):
+                continue
+            if (abs(rx - end_rx) <= safe_radius and abs(ry - end_ry) <= safe_radius):
+                continue
+
+            # 房间内部区域（不包括边缘，避免堵死走廊入口）
+            base_x = rx * stride + 1
+            base_y = ry * stride + 1
+
+            # 对于 room_size <= 2 的小房间，直接在全部格子上放障碍
+            # 对于 room_size >= 3 的大房间，避开边缘行/列（保留走廊入口通畅）
+            if room_size >= 3:
+                inner_range_x = range(1, room_size - 1)
+                inner_range_y = range(1, room_size - 1)
+            else:
+                inner_range_x = range(room_size)
+                inner_range_y = range(room_size)
+
+            for dy in inner_range_y:
+                for dx in inner_range_x:
+                    if rng.random() < density:
+                        blocked[base_y + dy][base_x + dx] = True
 
 
 # ============================================================
 # 边墙 → 墙壁线段转换（合并连续线段）
 # ============================================================
 
-def edges_to_blocked_grid(edge_set, grid_dim):
+def edges_to_blocked_grid(edge_set, grid_dim, room_size=1):
     """
-    将边墙集合转换为 (2N+1)×(2N+1) 的 blocked 网格
+    将边墙集合转换为可配置房间大小的 blocked 网格
 
-    映射规则（经典 2N+1 编码）：
-      - 房间 (rx, ry) → 网格 (2*rx+1, 2*ry+1)，始终为通道
-      - 水平边墙 (rx,ry)-(rx+1,ry) → 网格 (2*(rx+1), 2*ry+1)，blocked
-      - 垂直边墙 (rx,ry)-(rx,ry+1) → 网格 (2*rx+1, 2*(ry+1))，blocked
-      - 交叉点 (偶数,偶数) → 始终为 blocked
+    映射规则（Room & Corridor 模型）：
+      - 每个 DFS 房间 (rx, ry) 展开为 room_size × room_size 的可通行区域
+      - 墙壁宽度固定为 1 格
+      - 房间之间的走廊宽度 = room_size 格（与房间等宽，自然连接）
+      - 输出网格维度 = room_dim × (room_size + 1) + 1
+
+    当 room_size=1 时退化为经典 2N+1 编码（向后兼容）。
 
     参数：
         edge_set: WallEdgeSet 实例（N×N 房间的边墙）
         grid_dim: 房间维度 N
+        room_size: 每个房间展开的格子数（默认 1 = 经典模式）
 
     返回：
-        blocked: (2N+1)×(2N+1) 的二维列表，True=不可通行
-        out_dim: 输出网格维度 (2N+1)
+        blocked: 输出网格的二维列表，True=不可通行
+        out_dim: 输出网格维度
     """
-    out_dim = 2 * grid_dim + 1
+    stride = room_size + 1  # 每个房间占 stride 格（room_size 通道 + 1 墙壁）
+    out_dim = grid_dim * stride + 1
     blocked = [[False] * out_dim for _ in range(out_dim)]
 
-    # 所有偶数坐标交叉点为墙壁柱
-    for gy in range(0, out_dim, 2):
-        for gx in range(0, out_dim, 2):
+    # ---- 1. 先将所有格子标记为墙壁，再挖空房间和走廊 ----
+    for gy in range(out_dim):
+        for gx in range(out_dim):
             blocked[gy][gx] = True
 
-    # 外围边界：第 0 行、第 0 列、最后一行、最后一列全部为墙壁
-    for i in range(out_dim):
-        blocked[0][i] = True
-        blocked[out_dim - 1][i] = True
-        blocked[i][0] = True
-        blocked[i][out_dim - 1] = True
+    # ---- 2. 挖空每个房间（room_size × room_size 区域）----
+    for ry in range(grid_dim):
+        for rx in range(grid_dim):
+            # 房间左下角在输出网格中的坐标
+            base_x = rx * stride + 1
+            base_y = ry * stride + 1
+            for dy in range(room_size):
+                for dx in range(room_size):
+                    blocked[base_y + dy][base_x + dx] = False
 
-    # 内部边墙映射到 blocked 网格
-    for (a, b) in edge_set.get_all_walls():
-        ax, ay = a
-        bx, by = b
-        if ay == by:
-            # 水平边墙 (ax,ay)-(bx,by)，ax < bx → blocked 网格 (2*bx, 2*ay+1)
-            blocked[2 * ay + 1][2 * bx] = True
-        else:
-            # 垂直边墙 (ax,ay)-(bx,by)，ay < by → blocked 网格 (2*ax+1, 2*by)
-            blocked[2 * by][2 * ax + 1] = True
+    # ---- 3. 挖空走廊（移除边墙对应的格子）----
+    # 对于没有墙壁的相邻房间对，打通它们之间的 1 格宽墙壁带
+    for ry in range(grid_dim):
+        for rx in range(grid_dim):
+            # 检查右侧邻居 (rx+1, ry)
+            if rx + 1 < grid_dim and not edge_set.has_wall(rx, ry, rx + 1, ry):
+                # 打通水平走廊：墙壁列 = (rx+1)*stride，行范围 = 房间的 room_size 行
+                wall_col = (rx + 1) * stride
+                base_y = ry * stride + 1
+                for dy in range(room_size):
+                    blocked[base_y + dy][wall_col] = False
+
+            # 检查上方邻居 (rx, ry+1)
+            if ry + 1 < grid_dim and not edge_set.has_wall(rx, ry, rx, ry + 1):
+                # 打通垂直走廊：墙壁行 = (ry+1)*stride，列范围 = 房间的 room_size 列
+                wall_row = (ry + 1) * stride
+                base_x = rx * stride + 1
+                for dx in range(room_size):
+                    blocked[wall_row][base_x + dx] = False
 
     return blocked, out_dim
 
@@ -556,7 +623,7 @@ def ascii_preview(edge_set, grid_dim, start_gx, start_gy, end_gx, end_gy):
 
 def ascii_preview_blocked(blocked, grid_dim, start_gx, start_gy, end_gx, end_gy):
     """
-    终端 ASCII 预览地图（基于 2N+1 blocked 网格）
+    终端 ASCII 预览地图（基于 blocked 网格）
 
     ██ = 墙壁（blocked）
     S  = 起点
@@ -585,17 +652,18 @@ def ascii_preview_blocked(blocked, grid_dim, start_gx, start_gy, end_gx, end_gy)
 # ============================================================
 
 def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
-                 start_end_mode, fixed_start, fixed_end, min_distance):
+                 start_end_mode, fixed_start, fixed_end, min_distance,
+                 room_size=1, room_obstacle_density=0.0):
     """
-    生成一张随机迷宫地图（边墙模型 → 2N+1 blocked 网格输出）
+    生成一张随机迷宫地图（混合模型 Room & Corridor）
 
     内部使用边墙模型在 room_dim×room_dim 的房间网格上 DFS 生成迷宫，
-    输出时转换为 (2*room_dim+1)×(2*room_dim+1) 的 blocked 网格格式，
-    确保与 Client 端的 AABB 碰撞检测完全兼容。
+    输出时将每个房间展开为 room_size×room_size 的可通行区域，
+    墙壁宽度固定 1 格，确保与 Client 端的 AABB 碰撞检测完全兼容。
 
     参数：
         seed: 随机种子
-        grid_dim: 配置的网格维度（自动调整为奇数 2N+1）
+        grid_dim: 配置的网格维度
         grid_size: 配置的网格大小 (cm)（自动重算以保持地图总尺寸不变）
         wall_thickness: 墙壁厚度 (cm)
         extra_open_ratio: 额外打通墙壁比例
@@ -603,6 +671,8 @@ def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
         fixed_start: (x, y) 固定起点坐标（连续坐标）
         fixed_end: (x, y) 固定终点坐标（连续坐标）
         min_distance: random 模式最小几何距离（网格数）
+        room_size: 每个房间展开的格子数（1=经典 2N+1，3~5=宽敞房间）
+        room_obstacle_density: 房间内障碍物密度（0~1）
 
     返回：
         map_data: 地图 JSON 字典
@@ -612,10 +682,13 @@ def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
     """
     rng = random.Random(seed)
 
-    # 计算房间维度：room_dim = grid_dim // 2（向下取整）
-    # 输出网格维度：out_dim = 2 * room_dim + 1
-    room_dim = grid_dim // 2
-    out_dim = 2 * room_dim + 1
+    # 计算房间维度：room_dim = grid_dim // (room_size + 1)
+    # 输出网格维度：out_dim = room_dim * (room_size + 1) + 1
+    stride = room_size + 1
+    room_dim = grid_dim // stride
+    if room_dim < 2:
+        room_dim = 2  # 最少 2×2 房间
+    out_dim = room_dim * stride + 1
 
     # 保持地图总尺寸不变，重算输出网格大小
     map_size = grid_dim * grid_size
@@ -629,28 +702,16 @@ def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
 
     # 3. 确定起终点（在房间坐标系中）
     if start_end_mode == "fixed":
-        # 连续坐标 → 输出网格坐标 → 最近的房间中心（奇数坐标）
+        # 连续坐标 → 输出网格坐标 → 最近的房间中心
         start_out_gx = int(fixed_start[0] / out_grid_size)
         start_out_gy = int(fixed_start[1] / out_grid_size)
         end_out_gx = int(fixed_end[0] / out_grid_size)
         end_out_gy = int(fixed_end[1] / out_grid_size)
-        # 确保在奇数坐标（房间中心）
-        if start_out_gx % 2 == 0:
-            start_out_gx = max(1, start_out_gx + 1)
-        if start_out_gy % 2 == 0:
-            start_out_gy = max(1, start_out_gy + 1)
-        if end_out_gx % 2 == 0:
-            end_out_gx = min(out_dim - 2, end_out_gx + 1)
-        if end_out_gy % 2 == 0:
-            end_out_gy = min(out_dim - 2, end_out_gy + 1)
-        # 钳位
-        start_out_gx = max(1, min(out_dim - 2, start_out_gx))
-        start_out_gy = max(1, min(out_dim - 2, start_out_gy))
-        end_out_gx = max(1, min(out_dim - 2, end_out_gx))
-        end_out_gy = max(1, min(out_dim - 2, end_out_gy))
-        # 转换为房间坐标
-        start_rx, start_ry = start_out_gx // 2, start_out_gy // 2
-        end_rx, end_ry = end_out_gx // 2, end_out_gy // 2
+        # 转换为房间坐标（反推：gx = rx * stride + 1 + room_size//2 → rx = (gx - 1) // stride）
+        start_rx = max(0, min(room_dim - 1, (start_out_gx - 1) // stride))
+        start_ry = max(0, min(room_dim - 1, (start_out_gy - 1) // stride))
+        end_rx = max(0, min(room_dim - 1, (end_out_gx - 1) // stride))
+        end_ry = max(0, min(room_dim - 1, (end_out_gy - 1) // stride))
     elif start_end_mode == "random":
         result = generate_random_start_end(room_dim, min_distance, rng)
         if result is None:
@@ -670,14 +731,20 @@ def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
         edge_set, room_dim, start_rx, start_ry, end_rx, end_ry
     )
 
-    # 6. 边墙 → 2N+1 blocked 网格
-    blocked, _ = edges_to_blocked_grid(edge_set, room_dim)
+    # 6. 边墙 → blocked 网格（可配置房间大小）
+    blocked, _ = edges_to_blocked_grid(edge_set, room_dim, room_size)
 
-    # 7. 起终点在输出网格中的坐标（房间中心 = 奇数坐标）
-    start_gx = start_rx * 2 + 1
-    start_gy = start_ry * 2 + 1
-    end_gx = end_rx * 2 + 1
-    end_gy = end_ry * 2 + 1
+    # 7. 起终点在输出网格中的坐标（房间中心）
+    # 房间 (rx, ry) 的中心 = (rx * stride + 1 + room_size//2, ry * stride + 1 + room_size//2)
+    start_gx = start_rx * stride + 1 + room_size // 2
+    start_gy = start_ry * stride + 1 + room_size // 2
+    end_gx = end_rx * stride + 1 + room_size // 2
+    end_gy = end_ry * stride + 1 + room_size // 2
+
+    # 7a. 房间内随机障碍物（口袋/柱子）
+    if room_obstacle_density > 0 and room_size >= 2:
+        add_room_obstacles(blocked, room_dim, room_size, room_obstacle_density, rng,
+                           start_rx, start_ry, end_rx, end_ry, safe_radius=1)
 
     # 确保起终点在 blocked 网格中可通行
     clear_blocked_safe_zone(blocked, out_dim, start_gx, start_gy, radius=1)
@@ -690,14 +757,16 @@ def generate_map(seed, grid_dim, grid_size, wall_thickness, extra_open_ratio,
     start_pos = {"x": round((start_gx + 0.5) * out_grid_size, 2), "y": round((start_gy + 0.5) * out_grid_size, 2)}
     end_pos = {"x": round((end_gx + 0.5) * out_grid_size, 2), "y": round((end_gy + 0.5) * out_grid_size, 2)}
 
-    # 10. 组装地图数据（v2 格式）
+    # 10. 组装地图数据（v3 格式，新增 room_size 字段）
     map_data = {
         "map_id": f"maze_{seed}",
-        "version": 2,
+        "version": 3,
         "seed": seed,
         "difficulty": 0,
         "grid_count": out_dim,
         "grid_size": round(out_grid_size, 2),
+        "room_size": room_size,
+        "room_dim": room_dim,
         "bounds": {"x_min": 0, "x_max": map_size, "y_min": 0, "y_max": map_size},
         "start_pos": start_pos,
         "end_pos": end_pos,
@@ -769,7 +838,7 @@ def main():
     default_config_path = os.path.join(script_dir, "map_config.yaml")
 
     parser = argparse.ArgumentParser(
-        description="随机迷宫地图生成器（边墙模型 Wall-Edge）",
+        description="随机迷宫地图生成器（混合模型 Room & Corridor）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 示例：
@@ -821,6 +890,8 @@ def main():
     # 地图参数
     grid_count = get_config_value(config, "map", "grid_count", 40, int)
     grid_size = get_config_value(config, "map", "grid_size", 500, int)
+    room_size = get_config_value(config, "map", "room_size", 3, int)
+    room_size = max(1, room_size)  # 最小为 1（经典 2N+1 模式）
 
     # 起终点参数
     start_end_mode = get_config_value(config, "start_end", "mode", "default")
@@ -839,6 +910,10 @@ def main():
     difficulty = max(1, min(5, difficulty))
     wall_thickness = get_config_value(config, "maze", "wall_thickness", 10, int)
 
+    # 房间内障碍物密度
+    room_obstacle_density = get_config_value(config, "maze", "room_obstacle_density", 0.0, float)
+    room_obstacle_density = max(0.0, min(1.0, room_obstacle_density))
+
     # 额外打通比例：命令行 > 配置文件 > 难度自动
     if args.extra_open is not None:
         extra_open_ratio = args.extra_open
@@ -855,14 +930,17 @@ def main():
 
     # 打印生成参数
     map_size = grid_count * grid_size
-    room_dim = grid_count // 2
-    out_dim = 2 * room_dim + 1
+    stride = room_size + 1
+    room_dim = grid_count // stride
+    if room_dim < 2:
+        room_dim = 2
+    out_dim = room_dim * stride + 1
     out_grid_size = map_size / out_dim
-    print(f"生成参数: {room_dim}×{room_dim} 房间 → {out_dim}×{out_dim} 输出网格, "
+    print(f"生成参数: {room_dim}×{room_dim} 房间 (room_size={room_size}) → {out_dim}×{out_dim} 输出网格, "
           f"格子≈{out_grid_size:.0f}cm, 地图={map_size}×{map_size}cm")
     print(f"难度: {difficulty}, 额外打通: {extra_open_ratio:.2f}, "
-          f"起终点模式: {start_end_mode}")
-    print(f"模型: 边墙模型（Wall-Edge）→ 2N+1 blocked 网格输出")
+          f"房间障碍密度: {room_obstacle_density:.2f}, 起终点模式: {start_end_mode}")
+    print(f"模型: Room & Corridor 混合模型（room_size={room_size}）")
 
     # 确定种子列表
     if args.seed is not None:
@@ -885,6 +963,8 @@ def main():
             fixed_start=fixed_start,
             fixed_end=fixed_end,
             min_distance=min_distance,
+            room_size=room_size,
+            room_obstacle_density=room_obstacle_density,
         )
         total_retries += retries
 

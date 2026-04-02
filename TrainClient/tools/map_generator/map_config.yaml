@@ -2,27 +2,29 @@
 # 地图生成器配置 - map_config.yaml
 # 说明：控制迷宫地图的生成参数，包括尺寸、起终点、难度等
 #       修改后重新运行 generate_maze.py 即可生效
-#       生成模型：边墙模型（Wall-Edge）→ 2N+1 blocked 网格输出
-#       grid_count/2 = 房间数，输出网格 = 2*房间数+1
+#       生成模型：边墙模型（Wall-Edge）→ 可配置房间大小的 blocked 网格输出
+#       room_dim = grid_count / (room_size + 1)，输出网格 = room_dim * (room_size + 1) + 1
 # ============================================================================
 
 # --- 地图尺寸参数 ---
 map:
-  grid_count: 40                  # 配置网格数量，房间数 = grid_count/2 = 20，输出网格 = 41×41
-  grid_size: 500                  # 配置格子尺寸 (cm)，地图总尺寸 = grid_count × grid_size = 20000cm
+  grid_count: 100                 # 配置网格数量，用于计算房间数和输出网格维度
+  grid_size: 500                  # 配置格子尺寸 (cm)，地图总尺寸 = grid_count × grid_size
+  room_size: 3                    # 每个 DFS 房间展开为 room_size × room_size 的可通行区域（1=经典迷宫，3~5=宽敞房间）
 
 # --- 起终点参数 ---
 start_end:
   mode: "default"                 # 起终点模式："default"=对角线默认 | "fixed"=指定坐标 | "random"=随机分布
-  min_distance: 5                 # random 模式：起终点最小几何距离（网格数），确保有足够的寻路空间
+  min_distance: 10                # random 模式：起终点最小几何距离（网格数），确保有足够的寻路空间
   # fixed 模式下的指定坐标（连续坐标，单位 cm）
   fixed_start_x: 750.0           # 指定起点 X 坐标
   fixed_start_y: 750.0           # 指定起点 Y 坐标
-  fixed_end_x: 19750.0           # 指定终点 X 坐标
-  fixed_end_y: 19750.0           # 指定终点 Y 坐标
+  fixed_end_x: 49250.0           # 指定终点 X 坐标
+  fixed_end_y: 49250.0           # 指定终点 Y 坐标
 
 # --- 迷宫生成参数 ---
 maze:
   difficulty: 3                   # 难度等级 1-5（1=简单多通路, 3=标准, 5=困难少通路）
   wall_thickness: 10              # 墙壁厚度 (cm)，用于碰撞检测的 AABB 扩展
   extra_open_ratio: -1            # 额外打通墙壁比例（-1=由 difficulty 自动决定，0~1=手动指定）
+  room_obstacle_density: 0.15     # 房间内障碍物密度（0=无障碍，0.1~0.3=适中，0.5=密集），形成口袋/柱子结构
