@@ -284,3 +284,11 @@ AIServer 通过 `server_config.yaml` 中的 `run_mode` 控制行为：
 | 构建                   | CMake + Ninja    | 3.28+       |
 | 容器                   | Docker + Compose | v2          |
 | 可视化                 | HTML5 Canvas     | —          |
+
+---
+
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+Copyright © 2026 AChbite
