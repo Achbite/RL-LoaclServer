@@ -1,6 +1,29 @@
 #include "viz/viz_recorder.h"
 #include "log/logger.h"
 
+#include <cerrno>
+#include <cstring>
+
+// ---- 递归创建目录（等效 mkdir -p）----
+static bool MkdirRecursive(const std::string& path) {
+    if (path.empty()) return false;
+
+    // 逐级检查并创建
+    std::string current;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current += path[i];
+        if (path[i] == '/' || i == path.size() - 1) {
+            struct stat st;
+            if (stat(current.c_str(), &st) != 0) {
+                if (mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 // ---- 析构函数 ----
 VizRecorder::~VizRecorder() {
     End();
@@ -14,8 +37,12 @@ bool VizRecorder::Begin(const std::string& output_dir, int episode_id) {
     output_dir_ = output_dir;
     frame_count_ = 0;
 
-    // 创建输出目录
-    mkdir(output_dir.c_str(), 0755);
+    // 递归创建输出目录（等效 mkdir -p，支持多级路径如 log/viz）
+    if (!MkdirRecursive(output_dir)) {
+        LOG_ERROR("VizRecorder", "无法创建输出目录: %s (errno=%d: %s)",
+                  output_dir.c_str(), errno, std::strerror(errno));
+        return false;
+    }
 
     // 生成文件名：ep_NNN_YYYYMMDD_HHMMSS.jsonl
     std::time_t now = std::time(nullptr);

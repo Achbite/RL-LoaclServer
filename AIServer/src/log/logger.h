@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdarg>
+#include <cerrno>
 #include <ctime>
 #include <string>
 #include <mutex>
@@ -25,12 +26,30 @@ public:
         return instance;
     }
 
+    // ---- 递归创建目录（等效 mkdir -p，支持多级路径）----
+    static bool MkdirRecursive(const std::string& path) {
+        if (path.empty()) return false;
+        std::string current;
+        for (size_t i = 0; i < path.size(); ++i) {
+            current += path[i];
+            if (path[i] == '/' || i == path.size() - 1) {
+                struct stat st;
+                if (stat(current.c_str(), &st) != 0) {
+                    if (mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     // ---- 初始化（创建 log 目录 + 打开日志文件）----
     bool Init(const std::string& log_dir = "log") {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // 创建日志目录（mkdir -p 等效）
-        mkdir(log_dir.c_str(), 0755);
+        // 递归创建日志目录（等效 mkdir -p，支持多级路径）
+        MkdirRecursive(log_dir);
 
         // 生成日志文件名：rpc_YYYYMMDD_HHMMSS.log
         std::time_t now = std::time(nullptr);

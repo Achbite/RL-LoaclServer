@@ -37,7 +37,7 @@ model:
   export_interval: 10             # 每训练 N 步导出一次 ONNX 模型到 P2P 目录
   save_interval: 10               # 每训练 N 步保存一次 checkpoint 到 save 目录（断点续训）
   checkpoint_enabled: false        # 是否启用 checkpoint 加载（开启后自动从 save 目录加载历史保存点续训，默认关闭使用随机初始化）
-  obs_dim: 5                      # 观测向量维度（当前简化版 5 维，后续扩展到 20 维）
+  obs_dim: 13                     # 观测向量维度（5 导航特征 + 8 方向射线障碍物检测）
   action_dim: 9                   # 动作空间维度
   hidden_dim: 64                  # 隐藏层维度
 

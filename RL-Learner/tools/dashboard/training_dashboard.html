@@ -350,6 +350,7 @@ const CHART_DEFAULTS = {
 // 点击某条曲线 → 聚焦（只显示它，隐藏其他，Y 轴自动适配聚焦数据）
 // 聚焦模式下点击其他曲线 → 追加到聚焦集合
 // 再次点击已聚焦的曲线 → 从聚焦集合移除（集合空则恢复全部）
+// 联动规则：聚焦/取消某条曲线时，自动联动同名的 [批次]/[趋势] 配对线
 function makeFocusLegendClick(canvasId) {
     return function(e, legendItem, legend) {
         const chart = legend.chart;
@@ -357,19 +358,55 @@ function makeFocusLegendClick(canvasId) {
         if (!chartFocus[canvasId]) chartFocus[canvasId] = new Set();
         const focused = chartFocus[canvasId];
 
+        // 查找当前曲线的配对曲线索引（[批次]↔[趋势] 同名联动）
+        const pairIndices = findPairIndices(chart, idx);
+
         if (focused.size === 0) {
-            // 当前无聚焦 → 进入聚焦模式，只显示点击的曲线
+            // 当前无聚焦 → 进入聚焦模式，显示点击的曲线及其配对
             focused.add(idx);
+            pairIndices.forEach(pi => focused.add(pi));
         } else if (focused.has(idx)) {
-            // 点击已聚焦的曲线 → 取消聚焦
+            // 点击已聚焦的曲线 → 取消聚焦（连同配对一起移除）
             focused.delete(idx);
+            pairIndices.forEach(pi => focused.delete(pi));
         } else {
-            // 聚焦模式下点击其他曲线 → 追加到聚焦集合
+            // 聚焦模式下点击其他曲线 → 追加到聚焦集合（连同配对）
             focused.add(idx);
+            pairIndices.forEach(pi => focused.add(pi));
         }
 
         applyFocusState(canvasId, chart);
     };
+}
+
+// ---- 查找配对曲线索引（[批次]↔[趋势] 同名联动）----
+// 例如 "[批次] displacement_reward" 的配对是 "[趋势] displacement_reward"，反之亦然
+function findPairIndices(chart, idx) {
+    const datasets = chart.data.datasets;
+    if (idx >= datasets.length) return [];
+
+    const label = datasets[idx].label || '';
+    let baseName = '';
+    let pairPrefix = '';
+
+    if (label.startsWith('[批次] ')) {
+        baseName = label.replace('[批次] ', '');
+        pairPrefix = '[趋势] ';
+    } else if (label.startsWith('[趋势] ')) {
+        baseName = label.replace('[趋势] ', '');
+        pairPrefix = '[批次] ';
+    } else {
+        return [];  // 非 [批次]/[趋势] 前缀的曲线无配对
+    }
+
+    const pairLabel = pairPrefix + baseName;
+    const pairs = [];
+    datasets.forEach((ds, i) => {
+        if (i !== idx && ds.label === pairLabel) {
+            pairs.push(i);
+        }
+    });
+    return pairs;
 }
 
 // ---- 应用聚焦状态到图表 ----

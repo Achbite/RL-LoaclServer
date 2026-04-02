@@ -132,11 +132,11 @@ void MazeServiceImpl::StopModelWatcher() {
     }
 }
 
-// ---- 构建观测向量（简化版 5 维，验证数据流用）----
+// ---- 构建观测向量（13 维：5 导航 + 8 射线）----
 void MazeServiceImpl::BuildObs(const SessionManager::Session& session,
                                int gx, int gy, std::vector<float>& obs) {
     obs.clear();
-    obs.resize(5, 0.0f);
+    obs.resize(13, 0.0f);
 
     // [0-1] 归一化网格位置
     obs[0] = (session.grid_cols > 0) ? static_cast<float>(gx) / session.grid_cols : 0.0f;
@@ -155,6 +155,23 @@ void MazeServiceImpl::BuildObs(const SessionManager::Session& session,
     float max_dist = std::sqrt(static_cast<float>(
         session.grid_cols * session.grid_cols + session.grid_rows * session.grid_rows));
     obs[4] = (max_dist > 0.0f) ? dist / max_dist : 0.0f;
+
+    // [5-12] 八方向射线障碍物检测（最大探测 10 格，归一化到 [0,1]）
+    // 方向顺序：上、右上、右、右下、下、左下、左、左上
+    static const int ray_dx[8] = { 0,  1,  1,  1,  0, -1, -1, -1};
+    static const int ray_dy[8] = { 1,  1,  0, -1, -1, -1,  0,  1};
+    static constexpr int kMaxRayLen = 10;  // 最大射线探测距离（格）
+
+    for (int d = 0; d < 8; ++d) {
+        int ray_dist = 0;
+        for (int step = 1; step <= kMaxRayLen; ++step) {
+            int nx = gx + ray_dx[d] * step;
+            int ny = gy + ray_dy[d] * step;
+            if (!session.IsWalkable(nx, ny)) break;
+            ray_dist = step;
+        }
+        obs[5 + d] = static_cast<float>(ray_dist) / kMaxRayLen;
+    }
 }
 
 // ---- 收集单帧样本 ----
@@ -170,6 +187,17 @@ void MazeServiceImpl::CollectSample(SessionManager::Session& session,
     int agent_num = static_cast<int>(session.agents.size());
     RewardDetail reward_detail = MazeReward::Calculate(session, agent_id, gx, gy, is_done, agent_num);
     float reward = reward_detail.total;
+
+    // 更新探索/徘徊辅助状态（奖励计算完成后更新，确保当前帧判断基于历史数据）
+    auto agent_it = session.agents.find(agent_id);
+    if (agent_it != session.agents.end()) {
+        int key = gy * session.grid_cols + gx;
+        agent_it->second.visited.insert(key);
+        agent_it->second.recent_positions.push_back(key);
+        if (static_cast<int>(agent_it->second.recent_positions.size()) > 8) {
+            agent_it->second.recent_positions.pop_front();
+        }
+    }
 
     // 构建 Sample
     maze::Sample sample;
@@ -335,6 +363,9 @@ grpc::Status MazeServiceImpl::Init(grpc::ServerContext* ctx,
             InitAgentSolver(agent, *session);
         }
     }
+
+    // 初始化网格障碍物（训练模式下用于射线检测构建 obs）
+    session->InitBlocked(gs);
 
     session->initialized = true;
     rsp->set_ret_code(0);
@@ -552,6 +583,8 @@ grpc::Status MazeServiceImpl::EndEpisode(grpc::ServerContext* ctx,
         agent.prev_grid_y = -1;
         agent.reached_goal = false;
         agent.done_collected = false;
+        agent.visited.clear();
+        agent.recent_positions.clear();
     }
 
     // 重置竞争排名状态

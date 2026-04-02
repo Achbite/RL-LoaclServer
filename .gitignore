@@ -9,6 +9,10 @@ _check_output.txt
 /RL-Learner/logs/
 *.log
 
+# ---- 运行时数据（回放记录 + 指标数据）----
+/TrainClient/log/viz/*.jsonl
+/RL-Learner/logs/metrics/*.jsonl
+
 # ---- 模型二进制文件（递归匹配所有层级）----
 **/*.onnx
 **/*.pt
