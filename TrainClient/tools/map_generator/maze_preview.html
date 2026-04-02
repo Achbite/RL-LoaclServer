@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>迷宫地图预览</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 顶部工具栏 */
+        .toolbar {
+            background: #16213e;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 1px solid #0f3460;
+            flex-wrap: wrap;
+        }
+
+        .toolbar h1 {
+            font-size: 18px;
+            color: #e94560;
+            margin-right: 20px;
+        }
+
+        .toolbar label {
+            font-size: 13px;
+            color: #a0a0a0;
+        }
+
+        .toolbar input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            padding: 6px 14px;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            background: #16213e;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #0f3460;
+            border-color: #e94560;
+        }
+
+        .btn.active {
+            background: #e94560;
+            border-color: #e94560;
+            color: white;
+        }
+
+        .info-panel {
+            margin-left: auto;
+            font-size: 12px;
+            color: #a0a0a0;
+            text-align: right;
+        }
+
+        .info-panel .map-id { color: #e94560; font-weight: bold; }
+        .info-panel .reachable { color: #4ecca3; }
+        .info-panel .unreachable { color: #e94560; }
+
+        /* 主内容区 */
+        .main {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        /* 拖拽提示 */
+        .drop-zone {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .drop-zone.active {
+            background: rgba(233, 69, 96, 0.1);
+            border: 3px dashed #e94560;
+            pointer-events: all;
+        }
+
+        .drop-hint {
+            text-align: center;
+            color: #a0a0a0;
+        }
+
+        .drop-hint .icon { font-size: 64px; margin-bottom: 16px; }
+        .drop-hint p { font-size: 16px; }
+        .drop-hint .sub { font-size: 12px; color: #666; margin-top: 8px; }
+
+        /* Canvas */
+        canvas {
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            background: #0a0a1a;
+        }
+
+        /* 底部状态栏 */
+        .status-bar {
+            background: #16213e;
+            padding: 6px 20px;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px solid #0f3460;
+            display: flex;
+            gap: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <h1>🏗️ 迷宫预览</h1>
+
+    <label class="btn" id="fileBtn">
+        📂 选择文件
+        <input type="file" id="fileInput" accept=".json" multiple>
+    </label>
+
+    <button class="btn" id="gridToggle">📐 网格</button>
+    <button class="btn" id="pathToggle">🔍 BFS路径</button>
+    <button class="btn" id="prevMap" disabled>◀ 上一张</button>
+    <button class="btn" id="nextMap" disabled>下一张 ▶</button>
+
+    <div class="info-panel">
+        <div id="mapInfo">拖拽或选择 JSON 地图文件</div>
+        <div id="pathInfo"></div>
+    </div>
+</div>
+
+<div class="main">
+    <div class="drop-zone" id="dropZone">
+        <div class="drop-hint" id="dropHint">
+            <div class="icon">📁</div>
+            <p>拖拽 JSON 地图文件到此处</p>
+            <p class="sub">或点击上方"选择文件"按钮 | 支持多文件</p>
+        </div>
+    </div>
+    <canvas id="mazeCanvas" width="800" height="800"></canvas>
+</div>
+
+<div class="status-bar">
+    <span id="statusCoord">坐标: -</span>
+    <span id="statusGrid">网格: -</span>
+    <span id="statusWalls">墙壁数: -</span>
+    <span id="statusSeed">种子: -</span>
+</div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+const canvas = document.getElementById('mazeCanvas');
+const ctx = canvas.getContext('2d');
+
+const MAP_SIZE = 20000;
+const GRID_SIZE = 500;
+const GRID_DIM = 40;
+
+let maps = [];          // 加载的地图列表
+let currentIndex = 0;   // 当前显示的地图索引
+let showGrid = false;   // 是否显示网格
+let showPath = false;   // 是否显示 BFS 路径
+let bfsPath = null;     // BFS 路径缓存
+
+// ============================================================
+// 文件加载
+// ============================================================
+
+function loadMapFromJSON(jsonStr, filename) {
+    try {
+        const data = JSON.parse(jsonStr);
+        if (!data.walls || !data.bounds) {
+            alert(`文件 ${filename} 格式不正确：缺少 walls 或 bounds 字段`);
+            return null;
+        }
+        data._filename = filename;
+        return data;
+    } catch (e) {
+        alert(`文件 ${filename} 解析失败：${e.message}`);
+        return null;
+    }
+}
+
+function handleFiles(files) {
+    const newMaps = [];
+    let loaded = 0;
+
+    for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const map = loadMapFromJSON(e.target.result, file.name);
+            if (map) newMaps.push(map);
+            loaded++;
+            if (loaded === files.length) {
+                if (newMaps.length > 0) {
+                    maps = newMaps;
+                    currentIndex = 0;
+                    document.getElementById('dropHint').style.display = 'none';
+                    updateNavButtons();
+                    renderCurrentMap();
+                }
+            }
+        };
+        reader.readAsText(file);
+    }
+}
+
+// 文件选择
+document.getElementById('fileInput').addEventListener('change', (e) => {
+    if (e.target.files.length > 0) handleFiles(e.target.files);
+});
+
+// 拖拽
+const dropZone = document.getElementById('dropZone');
+document.body.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('active');
+});
+document.body.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget || !document.body.contains(e.relatedTarget)) {
+        dropZone.classList.remove('active');
+    }
+});
+document.body.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('active');
+    if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+});
+
+// ============================================================
+// 导航
+// ============================================================
+
+function updateNavButtons() {
+    document.getElementById('prevMap').disabled = currentIndex <= 0;
+    document.getElementById('nextMap').disabled = currentIndex >= maps.length - 1;
+}
+
+document.getElementById('prevMap').addEventListener('click', () => {
+    if (currentIndex > 0) { currentIndex--; updateNavButtons(); renderCurrentMap(); }
+});
+document.getElementById('nextMap').addEventListener('click', () => {
+    if (currentIndex < maps.length - 1) { currentIndex++; updateNavButtons(); renderCurrentMap(); }
+});
+
+// ============================================================
+// 开关
+// ============================================================
+
+document.getElementById('gridToggle').addEventListener('click', (e) => {
+    showGrid = !showGrid;
+    e.target.classList.toggle('active', showGrid);
+    if (maps.length > 0) renderCurrentMap();
+});
+
+document.getElementById('pathToggle').addEventListener('click', (e) => {
+    showPath = !showPath;
+    e.target.classList.toggle('active', showPath);
+    if (maps.length > 0) renderCurrentMap();
+});
+
+// ============================================================
+// BFS 路径查找
+// ============================================================
+
+function buildBlockedGrid(walls) {
+    const blocked = Array.from({ length: GRID_DIM }, () => new Uint8Array(GRID_DIM));
+
+    for (const w of walls) {
+        const halfT = (w.thickness || 100) * 0.5;
+        const minX = Math.min(w.x1, w.x2) - halfT;
+        const maxX = Math.max(w.x1, w.x2) + halfT;
+        const minY = Math.min(w.y1, w.y2) - halfT;
+        const maxY = Math.max(w.y1, w.y2) + halfT;
+
+        const gxMin = Math.max(0, Math.floor(minX / GRID_SIZE));
+        const gxMax = Math.min(GRID_DIM - 1, Math.floor(maxX / GRID_SIZE));
+        const gyMin = Math.max(0, Math.floor(minY / GRID_SIZE));
+        const gyMax = Math.min(GRID_DIM - 1, Math.floor(maxY / GRID_SIZE));
+
+        for (let gy = gyMin; gy <= gyMax; gy++) {
+            for (let gx = gxMin; gx <= gxMax; gx++) {
+                blocked[gy][gx] = 1;
+            }
+        }
+    }
+    return blocked;
+}
+
+function bfsFind(blocked, sx, sy, ex, ey) {
+    if (blocked[sy][sx] || blocked[ey][ex]) return null;
+
+    const visited = Array.from({ length: GRID_DIM }, () => new Uint8Array(GRID_DIM));
+    const parent = Array.from({ length: GRID_DIM }, () => new Int32Array(GRID_DIM).fill(-1));
+    visited[sy][sx] = 1;
+
+    const queue = [[sx, sy]];
+    const dirs = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    let head = 0;
+
+    while (head < queue.length) {
+        const [cx, cy] = queue[head++];
+        if (cx === ex && cy === ey) {
+            // 回溯路径
+            const path = [];
+            let px = ex, py = ey;
+            while (px !== sx || py !== sy) {
+                path.push([px, py]);
+                const encoded = parent[py][px];
+                px = encoded >> 16;
+                py = encoded & 0xFFFF;
+            }
+            path.push([sx, sy]);
+            path.reverse();
+            return path;
+        }
+
+        for (const [dx, dy] of dirs) {
+            const nx = cx + dx, ny = cy + dy;
+            if (nx >= 0 && nx < GRID_DIM && ny >= 0 && ny < GRID_DIM &&
+                !blocked[ny][nx] && !visited[ny][nx]) {
+                visited[ny][nx] = 1;
+                parent[ny][nx] = (cx << 16) | cy;
+                queue.push([nx, ny]);
+            }
+        }
+    }
+    return null;
+}
+
+// ============================================================
+// 渲染
+// ============================================================
+
+function renderCurrentMap() {
+    if (maps.length === 0) return;
+    const map = maps[currentIndex];
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const scale = cw / MAP_SIZE;
+
+    ctx.clearRect(0, 0, cw, ch);
+
+    // 背景
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, cw, ch);
+
+    // 网格线
+    if (showGrid) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= GRID_DIM; i++) {
+            const pos = i * GRID_SIZE * scale;
+            ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, ch); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(cw, pos); ctx.stroke();
+        }
+    }
+
+    // blocked 网格（半透明填充）
+    const blocked = buildBlockedGrid(map.walls);
+    const cellW = GRID_SIZE * scale;
+    const cellH = GRID_SIZE * scale;
+
+    for (let gy = 0; gy < GRID_DIM; gy++) {
+        for (let gx = 0; gx < GRID_DIM; gx++) {
+            if (blocked[gy][gx]) {
+                // Canvas Y 轴翻转：地图 Y 向上，Canvas Y 向下
+                const canvasY = (GRID_DIM - 1 - gy) * cellH;
+                ctx.fillStyle = 'rgba(100, 100, 140, 0.6)';
+                ctx.fillRect(gx * cellW, canvasY, cellW, cellH);
+            }
+        }
+    }
+
+    // 墙壁线段（高亮绘制）
+    ctx.strokeStyle = '#e94560';
+    ctx.lineWidth = Math.max(2, WALL_THICKNESS * scale);
+    ctx.lineCap = 'round';
+
+    for (const w of map.walls) {
+        const x1 = w.x1 * scale;
+        const y1 = (MAP_SIZE - w.y1) * scale;  // Y 轴翻转
+        const x2 = w.x2 * scale;
+        const y2 = (MAP_SIZE - w.y2) * scale;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+    }
+
+    // BFS 路径
+    if (showPath) {
+        const sx = Math.floor(map.start_pos.x / GRID_SIZE);
+        const sy = Math.floor(map.start_pos.y / GRID_SIZE);
+        const ex = Math.floor(map.end_pos.x / GRID_SIZE);
+        const ey = Math.floor(map.end_pos.y / GRID_SIZE);
+
+        // 确保起终点可通行
+        blocked[sy][sx] = 0;
+        blocked[ey][ex] = 0;
+
+        bfsPath = bfsFind(blocked, sx, sy, ex, ey);
+
+        if (bfsPath) {
+            ctx.strokeStyle = 'rgba(78, 204, 163, 0.7)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < bfsPath.length; i++) {
+                const px = (bfsPath[i][0] + 0.5) * cellW;
+                const py = (GRID_DIM - 1 - bfsPath[i][1] + 0.5) * cellH;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+        }
+    }
+
+    // 起点（绿色）
+    const startCanvasX = map.start_pos.x * scale;
+    const startCanvasY = (MAP_SIZE - map.start_pos.y) * scale;
+    ctx.fillStyle = '#4ecca3';
+    ctx.beginPath();
+    ctx.arc(startCanvasX, startCanvasY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('S', startCanvasX, startCanvasY - 10);
+
+    // 终点（红色）
+    const endCanvasX = map.end_pos.x * scale;
+    const endCanvasY = (MAP_SIZE - map.end_pos.y) * scale;
+    ctx.fillStyle = '#e94560';
+    ctx.beginPath();
+    ctx.arc(endCanvasX, endCanvasY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText('E', endCanvasX, endCanvasY - 10);
+
+    // 更新信息面板
+    const pathLen = (showPath && bfsPath) ? bfsPath.length : null;
+    document.getElementById('mapInfo').innerHTML =
+        `<span class="map-id">${map.map_id || map._filename}</span>` +
+        ` (${currentIndex + 1}/${maps.length})`;
+
+    if (pathLen !== null) {
+        document.getElementById('pathInfo').innerHTML =
+            `<span class="reachable">✓ 可达 | BFS 最短路径: ${pathLen} 步</span>`;
+    } else if (showPath && !bfsPath) {
+        document.getElementById('pathInfo').innerHTML =
+            `<span class="unreachable">✗ 不可达</span>`;
+    } else {
+        document.getElementById('pathInfo').innerHTML = '';
+    }
+
+    // 状态栏
+    document.getElementById('statusWalls').textContent = `墙壁数: ${map.walls.length}`;
+    document.getElementById('statusSeed').textContent = `种子: ${map.seed !== undefined ? map.seed : '未知'}`;
+}
+
+// ============================================================
+// 鼠标坐标追踪
+// ============================================================
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const scale = canvas.width / MAP_SIZE;
+    const mapX = mx / scale;
+    const mapY = MAP_SIZE - my / scale;  // Y 轴翻转
+
+    const gx = Math.floor(mapX / GRID_SIZE);
+    const gy = Math.floor(mapY / GRID_SIZE);
+
+    document.getElementById('statusCoord').textContent =
+        `坐标: (${Math.round(mapX)}, ${Math.round(mapY)})`;
+    document.getElementById('statusGrid').textContent =
+        `网格: (${gx}, ${gy})`;
+});
+
+// ============================================================
+// 初始化：显示拖拽提示
+// ============================================================
+
+// 初始绘制空白画布
+ctx.fillStyle = '#0a0a1a';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = '#333';
+ctx.font = '14px sans-serif';
+ctx.textAlign = 'center';
+ctx.fillText('拖拽或选择 JSON 地图文件开始预览', canvas.width / 2, canvas.height / 2);
+
+</script>
+</body>
+</html>
