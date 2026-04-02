@@ -11,7 +11,7 @@
 - **TrainClient**（C++）：并行 Episode 数据采集，迷宫环境模拟，地图 JSON 加载，射线感知
 - **AIServer**（C++）：特征提取、ONNX 推理、奖励计算、样本打包
 - **RL-Learner**（Python/PyTorch）：PPO 训练、GAE 计算、ONNX 模型导出
-- **地图生成器**（Python）：DFS 随机迷宫生成，支持难度、起终点模式、批量生成
+- **地图生成器**（Python）：DFS 随机迷宫生成，支持难度、起终点模式、批量生成，100×100 网格分辨率（101×101 输出网格）
 - **可视化**：HTML Canvas 播放器，浏览器回放 Agent 行走轨迹
 
 全部组件在 Docker 容器中运行，通过 docker-compose 编排，gRPC + Protobuf 通信。
