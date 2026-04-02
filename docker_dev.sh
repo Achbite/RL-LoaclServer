@@ -136,31 +136,53 @@ ok "Docker 环境就绪"
 
 if $RESTART_MODE; then
     echo ""
-    info "--- 重启模式：清理并重启容器 ---"
+    info "--- 重启模式：重启容器环境（保留编译产物）---"
 
     cd "${SCRIPT_DIR}"
 
-    # 停止并移除该服务的容器（包括孤儿容器）
-    info "停止并清理容器..."
+    # 仅停止并移除目标服务的容器（不影响其他服务，不清理编译产物）
+    info "停止目标容器: ${SERVICE_NAME}..."
     docker compose stop "${SERVICE_NAME}" 2>/dev/null || true
     docker compose rm -f "${SERVICE_NAME}" 2>/dev/null || true
 
-    # 清理该项目的孤儿容器
-    docker compose down --remove-orphans 2>/dev/null || true
+    ok "容器已重启（编译产物通过 bind mount 保留在宿主机）"
 
-    ok "容器已清理"
-
-    # 重新启动依赖服务（如 aiserver）
-    info "启动依赖服务..."
-    docker compose up -d --no-recreate 2>/dev/null || true
-
-    # 进入交互式 bash
-    echo ""
-    info "--- 进入容器交互式 bash ---"
-    info "退出容器: 输入 exit 或按 Ctrl+D"
-    echo ""
-
-    docker compose run --rm "${SERVICE_NAME}" bash
+    # 后台服务（aiserver/learner）：重新 up -d + exec 进入
+    # 临时容器（client/train）：run --rm 重新创建
+    case "$TARGET" in
+        aiserver)
+            info "重新启动 AIServer 后台服务..."
+            docker compose up -d maze-aiserver
+            echo ""
+            info "--- 进入 AIServer 容器交互式 bash ---"
+            info "退出容器: 输入 exit 或按 Ctrl+D"
+            echo ""
+            docker compose exec maze-aiserver bash
+            ;;
+        learner)
+            info "重新启动 Learner 后台服务..."
+            docker compose up -d maze-learner
+            echo ""
+            info "--- 进入 Learner 容器交互式 bash ---"
+            info "退出容器: 输入 exit 或按 Ctrl+D"
+            echo ""
+            docker compose exec maze-learner bash
+            ;;
+        client)
+            echo ""
+            info "--- 进入 TrainClient 容器交互式 bash ---"
+            info "退出容器: 输入 exit 或按 Ctrl+D"
+            echo ""
+            docker compose run --rm --service-ports maze-client bash
+            ;;
+        train)
+            echo ""
+            info "--- 进入 TrainClient 并行训练容器交互式 bash ---"
+            info "退出容器: 输入 exit 或按 Ctrl+D"
+            echo ""
+            docker compose run --rm --service-ports maze-train bash
+            ;;
+    esac
     exit 0
 fi
 

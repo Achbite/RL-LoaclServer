@@ -57,4 +57,7 @@ Thumbs.db
 .docker_build_hash
 .docker_build_hash_*
 
+# ccache 编译缓存
+.ccache/
+
 .codebuddy

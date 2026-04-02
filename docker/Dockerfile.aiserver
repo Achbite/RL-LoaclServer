@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     ninja-build \
+    ccache \
     protobuf-compiler \
     libprotobuf-dev \
     libgrpc++-dev \
@@ -21,6 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libabsl-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# --- ccache 编译缓存配置（缓存目录通过 bind mount 持久化到宿主机）---
+ENV CCACHE_DIR=/workspace/.ccache
+ENV CCACHE_MAXSIZE=2G
+ENV PATH="/usr/lib/ccache:${PATH}"
 
 # --- 安装 ONNX Runtime 1.17（CPU 预编译库，用于模型推理）---
 RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && \

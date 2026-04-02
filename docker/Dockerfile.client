@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     ninja-build \
+    ccache \
     protobuf-compiler \
     libprotobuf-dev \
     libgrpc++-dev \
@@ -25,6 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# --- ccache 编译缓存配置（缓存目录通过 bind mount 持久化到宿主机）---
+ENV CCACHE_DIR=/workspace/.ccache
+ENV CCACHE_MAXSIZE=2G
+ENV PATH="/usr/lib/ccache:${PATH}"
 
 # --- 工作目录（进入容器即在 TrainClient 目录）---
 WORKDIR /workspace/TrainClient
