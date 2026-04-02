@@ -154,9 +154,6 @@ RL-LoaclServer/
 │   ├── Dockerfile.client          # TrainClient 容器
 │   ├── Dockerfile.aiserver        # AIServer 容器（含 ONNX Runtime）
 │   └── Dockerfile.learner         # Learner 容器（Python + PyTorch）
-│
-├── .codebuddy/skills/             # Skill 知识库（项目设计文档）
-├── 参考文档/                       # 项目技术方案文档
 ├── docker-compose.yml             # 服务编排
 ├── docker_dev.sh                  # 统一入口脚本（构建 + 进入容器）
 ├── check_env.sh                   # Docker 环境检测与修复
