@@ -148,6 +148,7 @@
     <div class="info-panel">
         <div id="mapInfo">拖拽或选择 JSON 地图文件</div>
         <div id="pathInfo"></div>
+        <div id="metaInfo"></div>
     </div>
 </div>
 
@@ -167,6 +168,7 @@
     <span id="statusGrid">网格: -</span>
     <span id="statusWalls">墙壁数: -</span>
     <span id="statusSeed">种子: -</span>
+    <span id="statusDifficulty">难度: -</span>
 </div>
 
 <script>
@@ -176,15 +178,30 @@
 const canvas = document.getElementById('mazeCanvas');
 const ctx = canvas.getContext('2d');
 
-const MAP_SIZE = 20000;
-const GRID_SIZE = 500;
-const GRID_DIM = 40;
+const WALL_THICKNESS = 100;     // 墙壁厚度（cm），用于 blocked 网格构建
 
 let maps = [];          // 加载的地图列表
 let currentIndex = 0;   // 当前显示的地图索引
 let showGrid = false;   // 是否显示网格
 let showPath = false;   // 是否显示 BFS 路径
 let bfsPath = null;     // BFS 路径缓存
+
+// ============================================================
+// 从地图数据中获取参数（兼容 v1 和 v2 格式）
+// ============================================================
+
+function getMapSize(map) {
+    if (map.bounds) return map.bounds.x_max || 20000;
+    return 20000;
+}
+
+function getGridSize(map) {
+    return map.grid_size || 500;
+}
+
+function getGridDim(map) {
+    return map.grid_count || Math.ceil(getMapSize(map) / getGridSize(map));
+}
 
 // ============================================================
 // 文件加载
@@ -284,23 +301,23 @@ document.getElementById('pathToggle').addEventListener('click', (e) => {
 });
 
 // ============================================================
-// BFS 路径查找
+// BFS 路径查找（AABB blocked 网格模式）
 // ============================================================
 
-function buildBlockedGrid(walls) {
-    const blocked = Array.from({ length: GRID_DIM }, () => new Uint8Array(GRID_DIM));
+function buildBlockedGrid(walls, gridDim, gridSize) {
+    const blocked = Array.from({ length: gridDim }, () => new Uint8Array(gridDim));
 
     for (const w of walls) {
-        const halfT = (w.thickness || 100) * 0.5;
+        const halfT = (w.thickness || 10) * 0.5;
         const minX = Math.min(w.x1, w.x2) - halfT;
         const maxX = Math.max(w.x1, w.x2) + halfT;
         const minY = Math.min(w.y1, w.y2) - halfT;
         const maxY = Math.max(w.y1, w.y2) + halfT;
 
-        const gxMin = Math.max(0, Math.floor(minX / GRID_SIZE));
-        const gxMax = Math.min(GRID_DIM - 1, Math.floor(maxX / GRID_SIZE));
-        const gyMin = Math.max(0, Math.floor(minY / GRID_SIZE));
-        const gyMax = Math.min(GRID_DIM - 1, Math.floor(maxY / GRID_SIZE));
+        const gxMin = Math.max(0, Math.floor(minX / gridSize));
+        const gxMax = Math.min(gridDim - 1, Math.floor(maxX / gridSize));
+        const gyMin = Math.max(0, Math.floor(minY / gridSize));
+        const gyMax = Math.min(gridDim - 1, Math.floor(maxY / gridSize));
 
         for (let gy = gyMin; gy <= gyMax; gy++) {
             for (let gx = gxMin; gx <= gxMax; gx++) {
@@ -311,11 +328,11 @@ function buildBlockedGrid(walls) {
     return blocked;
 }
 
-function bfsFind(blocked, sx, sy, ex, ey) {
+function bfsFind(blocked, gridDim, sx, sy, ex, ey) {
     if (blocked[sy][sx] || blocked[ey][ex]) return null;
 
-    const visited = Array.from({ length: GRID_DIM }, () => new Uint8Array(GRID_DIM));
-    const parent = Array.from({ length: GRID_DIM }, () => new Int32Array(GRID_DIM).fill(-1));
+    const visited = Array.from({ length: gridDim }, () => new Uint8Array(gridDim));
+    const parent = Array.from({ length: gridDim }, () => new Int32Array(gridDim).fill(-1));
     visited[sy][sx] = 1;
 
     const queue = [[sx, sy]];
@@ -341,7 +358,7 @@ function bfsFind(blocked, sx, sy, ex, ey) {
 
         for (const [dx, dy] of dirs) {
             const nx = cx + dx, ny = cy + dy;
-            if (nx >= 0 && nx < GRID_DIM && ny >= 0 && ny < GRID_DIM &&
+            if (nx >= 0 && nx < gridDim && ny >= 0 && ny < gridDim &&
                 !blocked[ny][nx] && !visited[ny][nx]) {
                 visited[ny][nx] = 1;
                 parent[ny][nx] = (cx << 16) | cy;
@@ -360,9 +377,13 @@ function renderCurrentMap() {
     if (maps.length === 0) return;
     const map = maps[currentIndex];
 
+    const mapSize = getMapSize(map);
+    const gridSize = getGridSize(map);
+    const gridDim = getGridDim(map);
+
     const cw = canvas.width;
     const ch = canvas.height;
-    const scale = cw / MAP_SIZE;
+    const scale = cw / mapSize;
 
     ctx.clearRect(0, 0, cw, ch);
 
@@ -371,61 +392,49 @@ function renderCurrentMap() {
     ctx.fillRect(0, 0, cw, ch);
 
     // 网格线
+    const cellW = gridSize * scale;
+    const cellH = gridSize * scale;
     if (showGrid) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
         ctx.lineWidth = 0.5;
-        for (let i = 0; i <= GRID_DIM; i++) {
-            const pos = i * GRID_SIZE * scale;
+        for (let i = 0; i <= gridDim; i++) {
+            const pos = i * gridSize * scale;
             ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, ch); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(cw, pos); ctx.stroke();
         }
     }
 
-    // blocked 网格（半透明填充）
-    const blocked = buildBlockedGrid(map.walls);
-    const cellW = GRID_SIZE * scale;
-    const cellH = GRID_SIZE * scale;
+    // 构建 blocked 网格
+    const blocked = buildBlockedGrid(map.walls, gridDim, gridSize);
 
-    for (let gy = 0; gy < GRID_DIM; gy++) {
-        for (let gx = 0; gx < GRID_DIM; gx++) {
+    // 绘制通道和墙壁（blocked 网格实心填充）
+    for (let gy = 0; gy < gridDim; gy++) {
+        for (let gx = 0; gx < gridDim; gx++) {
+            const canvasY = (gridDim - 1 - gy) * cellH;
             if (blocked[gy][gx]) {
-                // Canvas Y 轴翻转：地图 Y 向上，Canvas Y 向下
-                const canvasY = (GRID_DIM - 1 - gy) * cellH;
-                ctx.fillStyle = 'rgba(100, 100, 140, 0.6)';
+                // 墙壁：深色实心填充
+                ctx.fillStyle = '#2a2a3e';
+                ctx.fillRect(gx * cellW, canvasY, cellW, cellH);
+            } else {
+                // 通道：浅色底
+                ctx.fillStyle = '#1a1a2e';
                 ctx.fillRect(gx * cellW, canvasY, cellW, cellH);
             }
         }
     }
 
-    // 墙壁线段（高亮绘制）
-    ctx.strokeStyle = '#e94560';
-    ctx.lineWidth = Math.max(2, WALL_THICKNESS * scale);
-    ctx.lineCap = 'round';
-
-    for (const w of map.walls) {
-        const x1 = w.x1 * scale;
-        const y1 = (MAP_SIZE - w.y1) * scale;  // Y 轴翻转
-        const x2 = w.x2 * scale;
-        const y2 = (MAP_SIZE - w.y2) * scale;
-
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-    }
-
     // BFS 路径
     if (showPath) {
-        const sx = Math.floor(map.start_pos.x / GRID_SIZE);
-        const sy = Math.floor(map.start_pos.y / GRID_SIZE);
-        const ex = Math.floor(map.end_pos.x / GRID_SIZE);
-        const ey = Math.floor(map.end_pos.y / GRID_SIZE);
+        const sx = Math.floor(map.start_pos.x / gridSize);
+        const sy = Math.floor(map.start_pos.y / gridSize);
+        const ex = Math.floor(map.end_pos.x / gridSize);
+        const ey = Math.floor(map.end_pos.y / gridSize);
 
         // 确保起终点可通行
         blocked[sy][sx] = 0;
         blocked[ey][ex] = 0;
 
-        bfsPath = bfsFind(blocked, sx, sy, ex, ey);
+        bfsPath = bfsFind(blocked, gridDim, sx, sy, ex, ey);
 
         if (bfsPath) {
             ctx.strokeStyle = 'rgba(78, 204, 163, 0.7)';
@@ -433,7 +442,7 @@ function renderCurrentMap() {
             ctx.beginPath();
             for (let i = 0; i < bfsPath.length; i++) {
                 const px = (bfsPath[i][0] + 0.5) * cellW;
-                const py = (GRID_DIM - 1 - bfsPath[i][1] + 0.5) * cellH;
+                const py = (gridDim - 1 - bfsPath[i][1] + 0.5) * cellH;
                 if (i === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
             }
@@ -441,9 +450,9 @@ function renderCurrentMap() {
         }
     }
 
-    // 起点（绿色）
+    // 起点（绿色圆点 + 标签）
     const startCanvasX = map.start_pos.x * scale;
-    const startCanvasY = (MAP_SIZE - map.start_pos.y) * scale;
+    const startCanvasY = (mapSize - map.start_pos.y) * scale;
     ctx.fillStyle = '#4ecca3';
     ctx.beginPath();
     ctx.arc(startCanvasX, startCanvasY, 6, 0, Math.PI * 2);
@@ -451,23 +460,28 @@ function renderCurrentMap() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('S', startCanvasX, startCanvasY - 10);
+    const sgx = Math.floor(map.start_pos.x / gridSize);
+    const sgy = Math.floor(map.start_pos.y / gridSize);
+    ctx.fillText(`S(${sgx},${sgy})`, startCanvasX, startCanvasY - 10);
 
-    // 终点（红色）
+    // 终点（红色圆点 + 标签）
     const endCanvasX = map.end_pos.x * scale;
-    const endCanvasY = (MAP_SIZE - map.end_pos.y) * scale;
+    const endCanvasY = (mapSize - map.end_pos.y) * scale;
     ctx.fillStyle = '#e94560';
     ctx.beginPath();
     ctx.arc(endCanvasX, endCanvasY, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.fillText('E', endCanvasX, endCanvasY - 10);
+    const egx = Math.floor(map.end_pos.x / gridSize);
+    const egy = Math.floor(map.end_pos.y / gridSize);
+    ctx.fillText(`E(${egx},${egy})`, endCanvasX, endCanvasY - 10);
 
     // 更新信息面板
     const pathLen = (showPath && bfsPath) ? bfsPath.length : null;
     document.getElementById('mapInfo').innerHTML =
         `<span class="map-id">${map.map_id || map._filename}</span>` +
-        ` (${currentIndex + 1}/${maps.length})`;
+        ` (${currentIndex + 1}/${maps.length})` +
+        ` | ${gridDim}×${gridDim} 网格`;
 
     if (pathLen !== null) {
         document.getElementById('pathInfo').innerHTML =
@@ -479,9 +493,17 @@ function renderCurrentMap() {
         document.getElementById('pathInfo').innerHTML = '';
     }
 
+    // 元数据信息
+    const metaParts = [];
+    if (map.difficulty) metaParts.push(`难度: ${map.difficulty}`);
+    if (map.bfs_path_length > 0) metaParts.push(`生成时BFS: ${map.bfs_path_length}步`);
+    if (map.version) metaParts.push(`v${map.version}`);
+    document.getElementById('metaInfo').textContent = metaParts.join(' | ');
+
     // 状态栏
     document.getElementById('statusWalls').textContent = `墙壁数: ${map.walls.length}`;
     document.getElementById('statusSeed').textContent = `种子: ${map.seed !== undefined ? map.seed : '未知'}`;
+    document.getElementById('statusDifficulty').textContent = `难度: ${map.difficulty || '未知'}`;
 }
 
 // ============================================================
@@ -489,16 +511,21 @@ function renderCurrentMap() {
 // ============================================================
 
 canvas.addEventListener('mousemove', (e) => {
+    if (maps.length === 0) return;
+    const map = maps[currentIndex];
+    const mapSize = getMapSize(map);
+    const gridSize = getGridSize(map);
+
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
-    const scale = canvas.width / MAP_SIZE;
+    const scale = canvas.width / mapSize;
     const mapX = mx / scale;
-    const mapY = MAP_SIZE - my / scale;  // Y 轴翻转
+    const mapY = mapSize - my / scale;
 
-    const gx = Math.floor(mapX / GRID_SIZE);
-    const gy = Math.floor(mapY / GRID_SIZE);
+    const gx = Math.floor(mapX / gridSize);
+    const gy = Math.floor(mapY / gridSize);
 
     document.getElementById('statusCoord').textContent =
         `坐标: (${Math.round(mapX)}, ${Math.round(mapY)})`;
@@ -510,7 +537,6 @@ canvas.addEventListener('mousemove', (e) => {
 // 初始化：显示拖拽提示
 // ============================================================
 
-// 初始绘制空白画布
 ctx.fillStyle = '#0a0a1a';
 ctx.fillRect(0, 0, canvas.width, canvas.height);
 ctx.fillStyle = '#333';

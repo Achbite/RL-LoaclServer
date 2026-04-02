@@ -65,3 +65,4 @@ Thumbs.db
 .ccache/
 
 .codebuddy
+/TrainClient/maps/save

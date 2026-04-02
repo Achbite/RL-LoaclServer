@@ -736,33 +736,47 @@ function renderFrame(data) {
         ctx.stroke();
     }
 
-    // ---- 2. 绘制墙壁 ----
+    // ---- 2. 绘制墙壁（blocked 网格实心填充，与客户端碰撞检测一致）----
     if (map.walls) {
-        ctx.fillStyle = '#37474f';
-        ctx.strokeStyle = '#546e7a';
-        ctx.lineWidth = 1;
+        // 推算网格参数：优先使用帧数据中的 grid_count/grid_size，否则默认值
+        const gridSize = map.grid_size || 500;
+        const gridDim = map.grid_count || Math.ceil(mapW / gridSize);
 
+        // 构建 blocked 网格（与客户端 AddWallToGrid 逻辑一致）
+        const blocked = Array.from({ length: gridDim }, () => new Uint8Array(gridDim));
         for (const wall of map.walls) {
-            const t = (wall.thickness || 100) * scale;
-            const [x1, y1] = toCanvas(wall.x1, wall.y1);
-            const [x2, y2] = toCanvas(wall.x2, wall.y2);
+            const halfT = (wall.thickness || 10) * 0.5;
+            const minX = Math.min(wall.x1, wall.x2) - halfT;
+            const maxX = Math.max(wall.x1, wall.x2) + halfT;
+            const minY = Math.min(wall.y1, wall.y2) - halfT;
+            const maxY = Math.max(wall.y1, wall.y2) + halfT;
 
-            const dx = x2 - x1;
-            const dy = y2 - y1;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            if (len < 0.1) continue;
+            const gxMin = Math.max(0, Math.floor(minX / gridSize));
+            const gxMax = Math.min(gridDim - 1, Math.floor(maxX / gridSize));
+            const gyMin = Math.max(0, Math.floor(minY / gridSize));
+            const gyMax = Math.min(gridDim - 1, Math.floor(maxY / gridSize));
 
-            const nx = -dy / len * t / 2;
-            const ny = dx / len * t / 2;
+            for (let gy = gyMin; gy <= gyMax; gy++) {
+                for (let gx = gxMin; gx <= gxMax; gx++) {
+                    blocked[gy][gx] = 1;
+                }
+            }
+        }
 
-            ctx.beginPath();
-            ctx.moveTo(x1 + nx, y1 + ny);
-            ctx.lineTo(x2 + nx, y2 + ny);
-            ctx.lineTo(x2 - nx, y2 - ny);
-            ctx.lineTo(x1 - nx, y1 - ny);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
+        // 绘制 blocked 网格（实心填充）
+        const cellW = gridSize * scale;
+        const cellH = gridSize * scale;
+        ctx.fillStyle = '#37474f';
+        for (let gy = 0; gy < gridDim; gy++) {
+            for (let gx = 0; gx < gridDim; gx++) {
+                if (blocked[gy][gx]) {
+                    // 网格中心的连续坐标 → Canvas 坐标
+                    const worldX = gx * gridSize;
+                    const worldY = (gy + 1) * gridSize;  // 格子顶部 Y
+                    const [cx, cy] = toCanvas(worldX, worldY);
+                    ctx.fillRect(cx, cy, cellW, cellH);
+                }
+            }
         }
     }
 

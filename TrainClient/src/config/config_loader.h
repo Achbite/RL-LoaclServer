@@ -14,12 +14,14 @@ struct RunConfig {
 struct EnvConfig {
     float map_width      = 20000.0f;    // 地图宽度 (cm)
     float map_height     = 20000.0f;    // 地图高度 (cm)
-    int   grid_size      = 500;         // 网格大小 (cm)，将连续坐标离散化为网格
+    float grid_size      = 500.0f;      // 网格大小 (cm)，将连续坐标离散化为网格，支持浮点精度
     int   max_steps      = 10000;       // 最大步数
     float start_x        = 500.0f;      // 起点 X
     float start_y        = 500.0f;      // 起点 Y
     float end_x          = 19500.0f;    // 终点 X
     float end_y          = 19500.0f;    // 终点 Y
+    std::string map_file;               // 地图 JSON 文件路径（为空则从 map_dir 随机选取或使用默认墙壁）
+    std::string map_dir;                // 地图目录路径（存在 .json 文件则随机选取一个，否则忽略）
 };
 
 // ---- 网络参数 ----

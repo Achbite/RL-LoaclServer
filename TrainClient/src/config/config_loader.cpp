@@ -135,12 +135,24 @@ bool LoadClientConfig(const std::string& yaml_path, ClientConfig& out_config) {
     // --- env ---
     out_config.env.map_width      = SafeFloat(FindValue(entries, "env", "map_width"),      20000.0f);
     out_config.env.map_height     = SafeFloat(FindValue(entries, "env", "map_height"),     20000.0f);
-    out_config.env.grid_size      = SafeInt(FindValue(entries, "env", "grid_size"),        500);
+    out_config.env.grid_size      = SafeFloat(FindValue(entries, "env", "grid_size"),      500.0f);
     out_config.env.max_steps      = SafeInt(FindValue(entries, "env", "max_steps"),        10000);
     out_config.env.start_x        = SafeFloat(FindValue(entries, "env", "start_x"),        500.0f);
     out_config.env.start_y        = SafeFloat(FindValue(entries, "env", "start_y"),        500.0f);
     out_config.env.end_x          = SafeFloat(FindValue(entries, "env", "end_x"),          19500.0f);
     out_config.env.end_y          = SafeFloat(FindValue(entries, "env", "end_y"),          19500.0f);
+
+    // 地图文件路径（为空则从 map_dir 随机选取或使用默认墙壁）
+    std::string map_file = FindValue(entries, "env", "map_file");
+    if (!map_file.empty()) {
+        out_config.env.map_file = map_file;
+    }
+
+    // 地图目录路径（存在 .json 文件则随机选取一个）
+    std::string map_dir = FindValue(entries, "env", "map_dir");
+    if (!map_dir.empty()) {
+        out_config.env.map_dir = map_dir;
+    }
 
     // --- network ---
     std::string host = FindValue(entries, "network", "server_host");
@@ -174,10 +186,12 @@ out_config.network.server_port = SafeInt(FindValue(entries, "network", "server_p
 
     LOG_INFO("Config", "run: agent_num=%d, max_episodes=%d, log_interval=%d",
              out_config.run.agent_num, out_config.run.max_episodes, out_config.run.log_interval);
-    LOG_INFO("Config", "env: map=%.0fx%.0f, start=(%.0f,%.0f), end=(%.0f,%.0f)",
+    LOG_INFO("Config", "env: map=%.0fx%.0f, start=(%.0f,%.0f), end=(%.0f,%.0f), map_file=%s, map_dir=%s",
              out_config.env.map_width, out_config.env.map_height,
              out_config.env.start_x, out_config.env.start_y,
-             out_config.env.end_x, out_config.env.end_y);
+             out_config.env.end_x, out_config.env.end_y,
+             out_config.env.map_file.empty() ? "(默认)" : out_config.env.map_file.c_str(),
+             out_config.env.map_dir.empty() ? "(未设置)" : out_config.env.map_dir.c_str());
     LOG_INFO("Config", "network: %s:%d",
              out_config.network.server_host.c_str(), out_config.network.server_port);
     LOG_INFO("Config", "viz: enabled=%s, output_dir=%s, interval=%d, server_port=%d",

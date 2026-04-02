@@ -38,16 +38,24 @@ static std::string BuildVizJson(const MazeEnv& env, const ClientConfig& cfg,
 
     // 地图信息
     ss << "\"map\":{";
-    ss << "\"width\":" << cfg.env.map_width << ",";
-    ss << "\"height\":" << cfg.env.map_height << ",";
-    ss << "\"start_pos\":{\"x\":" << cfg.env.start_x << ",\"y\":" << cfg.env.start_y << "},";
-    ss << "\"end_pos\":{\"x\":" << cfg.env.end_x << ",\"y\":" << cfg.env.end_y << "},";
+    ss << "\"width\":" << env.GetMapWidth() << ",";
+    ss << "\"height\":" << env.GetMapHeight() << ",";
+    ss << "\"grid_count\":" << env.GetGridCols() << ",";
+    ss << "\"grid_size\":" << env.GetGridSize() << ",";
+    ss << "\"start_pos\":{\"x\":" << env.GetStartX() << ",\"y\":" << env.GetStartY() << "},";
+    ss << "\"end_pos\":{\"x\":" << env.GetEndX() << ",\"y\":" << env.GetEndY() << "},";
 
-    // 墙壁（内部隔墙，不含外围边界）
+    // 墙壁（从 MazeEnv 动态获取）
     ss << "\"walls\":[";
-    ss << "{\"x1\":5000,\"y1\":0,\"x2\":5000,\"y2\":14000,\"thickness\":100},";
-    ss << "{\"x1\":10000,\"y1\":6000,\"x2\":10000,\"y2\":20000,\"thickness\":100},";
-    ss << "{\"x1\":15000,\"y1\":0,\"x2\":15000,\"y2\":14000,\"thickness\":100}";
+    const auto& walls = env.GetWalls();
+    for (size_t i = 0; i < walls.size(); ++i) {
+        if (i > 0) ss << ",";
+        ss << "{\"x1\":" << walls[i].x1
+           << ",\"y1\":" << walls[i].y1
+           << ",\"x2\":" << walls[i].x2
+           << ",\"y2\":" << walls[i].y2
+           << ",\"thickness\":" << walls[i].thickness << "}";
+    }
     ss << "]},";
 
     // Agent 列表（网格坐标转换为连续坐标用于可视化）
@@ -97,16 +105,16 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
         req.set_session_id(session_id);
 
         auto* map_size = req.mutable_map_size();
-        map_size->set_x(cfg.env.map_width);
-        map_size->set_y(cfg.env.map_height);
+        map_size->set_x(env.GetMapWidth());
+        map_size->set_y(env.GetMapHeight());
 
         auto* start_pos = req.mutable_start_pos();
-        start_pos->set_x(cfg.env.start_x);
-        start_pos->set_y(cfg.env.start_y);
+        start_pos->set_x(env.GetStartX());
+        start_pos->set_y(env.GetStartY());
 
         auto* end_pos = req.mutable_end_pos();
-        end_pos->set_x(cfg.env.end_x);
-        end_pos->set_y(cfg.env.end_y);
+        end_pos->set_x(env.GetEndX());
+        end_pos->set_y(env.GetEndY());
 
         maze::InitRsp rsp;
         if (!client.Init(req, rsp) || rsp.ret_code() != 0) {
@@ -130,6 +138,14 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
             pos->set_x(static_cast<float>(info.grid_x));
             pos->set_y(static_cast<float>(info.grid_y));
             agent_state->set_is_done(info.done);
+
+            // 填充 8 方向射线观测特征（Client 端计算，传给 AIServer）
+            if (!info.done) {
+                RayResult rays = env.CastRays(info.grid_x, info.grid_y);
+                for (int d = 0; d < 8; ++d) {
+                    agent_state->add_obs(rays.distances[d]);
+                }
+            }
         }
 
         // 发送 UpdateReq
@@ -168,8 +184,8 @@ static void RunEpisode(EpisodeWorker* worker, int episode_id,
     int agent_passed_count = 0;
     for (int i = 0; i < env.GetAgentNum(); ++i) {
         const AgentInfo& a = env.GetAgent(i);
-        if (a.grid_x == env.ToGridX(cfg.env.end_x) &&
-            a.grid_y == env.ToGridY(cfg.env.end_y)) {
+        if (a.grid_x == env.ToGridX(env.GetEndX()) &&
+            a.grid_y == env.ToGridY(env.GetEndY())) {
             agent_passed_count++;
         }
     }

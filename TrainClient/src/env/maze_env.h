@@ -2,9 +2,22 @@
 
 #include <vector>
 #include <cstdint>
+#include <string>
+#include <random>
 
 // 前向声明
 struct EnvConfig;
+
+// ---- 墙壁线段数据（从地图 JSON 加载）----
+struct WallSegment {
+    float x1, y1, x2, y2;      // 线段端点坐标 (cm)
+    float thickness;            // 墙壁厚度 (cm)
+};
+
+// ---- 8 方向射线检测结果 ----
+struct RayResult {
+    float distances[8];         // 8 方向归一化射线距离（0=紧贴墙壁，1=最大探测距离内无障碍）
+};
 
 // --- 网格级动作方向表 ---
 // action_id 0-8 对应的网格偏移 (dx, dy)，一次移动即 +1/-1
@@ -57,7 +70,7 @@ public:
     float GetStartY() const { return start_y_; }
     float GetEndX()   const { return end_x_; }
     float GetEndY()   const { return end_y_; }
-    int   GetGridSize() const { return grid_size_; }
+    float GetGridSize() const { return grid_size_; }
     int   GetGridCols() const { return grid_cols_; }
     int   GetGridRows() const { return grid_rows_; }
 
@@ -71,6 +84,12 @@ public:
 
     // 网格是否可通行
     bool IsWalkable(int gx, int gy) const;
+
+    // 8 方向射线检测（返回归一化距离，用于构建 obs 特征）
+    RayResult CastRays(int gx, int gy, int max_range = 10) const;
+
+    // 获取墙壁线段列表（用于可视化 JSON 输出）
+    const std::vector<WallSegment>& GetWalls() const { return walls_; }
 
 private:
     std::vector<AgentInfo> agents_;
@@ -86,7 +105,7 @@ private:
     int   frame_id_       = 0;          // 当前帧号
 
     // --- 网格参数 ---
-    int   grid_size_      = 500;        // 网格大小 (cm)
+    float grid_size_      = 500.0f;     // 网格大小 (cm)，支持浮点精度
     int   grid_cols_      = 0;          // 网格列数
     int   grid_rows_      = 0;          // 网格行数
     int   start_gx_       = 0;          // 起点网格 X
@@ -101,7 +120,20 @@ private:
     // --- 网格障碍物（true=不可通行）---
     std::vector<bool> blocked_;
 
-    // 加载墙壁到网格
+    // --- 墙壁线段列表（从地图 JSON 加载，用于可视化输出）---
+    std::vector<WallSegment> walls_;
+
+    // --- 地图文件/目录路径 ---
+    std::string map_file_;              // 指定的地图文件路径
+    std::string map_dir_;               // 地图目录路径（随机选取）
+
+    // 从 JSON 文件加载地图数据（墙壁、起终点、尺寸、grid_size、grid_count 等）
+    bool LoadMapFromFile(const std::string& filepath);
+
+    // 扫描目录并随机选取一个 .json 地图文件（map_dir 非空且 map_file 为空时调用）
+    std::string ScanAndPickMap(const std::string& dir_path);
+
+    // 加载墙壁到网格（硬编码默认墙壁，map_file 为空时使用）
     void LoadWalls();
 
     // 添加单面墙壁到网格

@@ -8,9 +8,10 @@
 
 一个**本地强化学习验证框架**，使用程序化生成的 2D 迷宫作为训练环境，验证 PPO 算法在迷宫寻路任务上的学习效果。
 
-- **TrainClient**（C++）：并行 Episode 数据采集，迷宫环境模拟
+- **TrainClient**（C++）：并行 Episode 数据采集，迷宫环境模拟，地图 JSON 加载，射线感知
 - **AIServer**（C++）：特征提取、ONNX 推理、奖励计算、样本打包
 - **RL-Learner**（Python/PyTorch）：PPO 训练、GAE 计算、ONNX 模型导出
+- **地图生成器**（Python）：DFS 随机迷宫生成，支持难度、起终点模式、批量生成
 - **可视化**：HTML Canvas 播放器，浏览器回放 Agent 行走轨迹
 
 全部组件在 Docker 容器中运行，通过 docker-compose 编排，gRPC + Protobuf 通信。
@@ -24,7 +25,7 @@ TrainClient (C++, 多线程并行)
 ├─ Thread 0: EpisodeWorker 0 ──┐
 ├─ Thread 1: EpisodeWorker 1 ──┤
 ├─ ...                         ├── gRPC (session_id 隔离) ──→ AIServer (C++)
-└─ Thread N: EpisodeWorker N ──┘                              ├─ 特征提取 (13维)
+└─ Thread N: EpisodeWorker N ──┘                              ├─ 特征提取 (导航5维 + Client射线8维 = 13维)
                                                               ├─ ONNX 推理
                                                               ├─ 奖励计算
                                                               ├─ 样本打包
@@ -39,7 +40,7 @@ TrainClient (C++, 多线程并行)
 TrainClient → log/viz/*.jsonl → HTTP 回放 → 浏览器 Canvas 播放器 (:9004)
 ```
 
-**训练闭环**：TrainClient 采集数据 → AIServer 推理+打包样本 → Learner PPO 训练 → 导出 ONNX → AIServer 热加载新模型 → 循环
+**训练闭环**：TrainClient 采集数据（含射线观测）→ AIServer 推理+打包样本 → Learner PPO 训练 → 导出 ONNX → AIServer 热加载新模型 → 循环
 
 ---
 
@@ -125,8 +126,13 @@ RL-LoaclServer/
 │   ├── main/                       # 主入口（main.cpp 单调试 / train_main.cpp 并行训练）
 │   ├── src/                        # 源码（config / env / grpc / log / pool / viz）
 │   ├── configs/client_config.yaml  # TrainClient 配置
-│   ├── maps/                       # 预生成地图文件（JSON）
+│   ├── maps/                       # 预生成地图文件（JSON，由生成器产出）
 │   ├── tools/                      # 地图生成器 + 可视化回放
+│   │   ├── map_generator/          # DFS 随机迷宫生成器
+│   │   │   ├── generate_maze.py    # 生成脚本（支持难度、起终点模式、批量）
+│   │   │   ├── map_config.yaml     # 生成器配置（尺寸、难度、起终点）
+│   │   │   └── maze_preview.html   # 浏览器端地图预览器
+│   │   └── viz_player/             # 可视化回放
 │   ├── build.sh / run.sh          # 容器内编译/运行脚本
 │   └── run_train.sh               # 并行训练运行脚本
 │
@@ -246,6 +252,7 @@ AIServer 通过 `server_config.yaml` 中的 `run_mode` 控制行为：
 | 奖励项   | 类型 | 值             | 说明                          |
 | -------- | ---- | -------------- | ----------------------------- |
 | 通关奖励 | 稀疏 | +10.0          | 到达终点                      |
+| 射线检测 | 感知 | 8方向归一化距离 | Client 端计算，随 UpdateReq 传给 AIServer |
 | 势能引导 | 密集 | γΦ(s')-Φ(s) | 防刷奖励的距离引导（Ng 1999） |
 | 探索奖励 | 密集 | +0.05          | 首次访问新网格                |
 | 徘徊惩罚 | 密集 | -0.02          | 8 步内重复访问同一网格        |

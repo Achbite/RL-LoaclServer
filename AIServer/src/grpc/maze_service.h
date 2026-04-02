@@ -56,13 +56,16 @@ private:
     void CollectSample(SessionManager::Session& session,            // 收集单帧样本
                         int agent_id, int gx, int gy,
                         int action, float old_log_prob,
-                        float old_vpred, bool is_done);
+                        float old_vpred, bool is_done,
+                        const std::vector<float>& client_obs);
     void FlushAgentSamples(SessionManager::Session& session,        // 批量发送指定 Agent 的样本到 Learner
                             int agent_id, bool is_episode_end);
     int  ChooseRandomAction();                                      // 随机策略采样
     int  SampleAction(const std::vector<float>& probs);             // 按概率分布采样动作
     void BuildObs(const SessionManager::Session& session,           // 构建观测向量（13 维：5 导航 + 8 射线）
-                    int gx, int gy, std::vector<float>& obs);
+                    int gx, int gy,
+                    const std::vector<float>& client_obs,
+                    std::vector<float>& obs);
 
     // ---- ONNX 推理 + 模型热更新 ----
     OnnxInferencer onnx_inferencer_;                                // ONNX 推理器

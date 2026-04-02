@@ -134,7 +134,9 @@ void MazeServiceImpl::StopModelWatcher() {
 
 // ---- 构建观测向量（13 维：5 导航 + 8 射线）----
 void MazeServiceImpl::BuildObs(const SessionManager::Session& session,
-                               int gx, int gy, std::vector<float>& obs) {
+                               int gx, int gy,
+                               const std::vector<float>& client_obs,
+                               std::vector<float>& obs) {
     obs.clear();
     obs.resize(13, 0.0f);
 
@@ -156,32 +158,24 @@ void MazeServiceImpl::BuildObs(const SessionManager::Session& session,
         session.grid_cols * session.grid_cols + session.grid_rows * session.grid_rows));
     obs[4] = (max_dist > 0.0f) ? dist / max_dist : 0.0f;
 
-    // [5-12] 八方向射线障碍物检测（最大探测 10 格，归一化到 [0,1]）
-    // 方向顺序：上、右上、右、右下、下、左下、左、左上
-    static const int ray_dx[8] = { 0,  1,  1,  1,  0, -1, -1, -1};
-    static const int ray_dy[8] = { 1,  1,  0, -1, -1, -1,  0,  1};
-    static constexpr int kMaxRayLen = 10;  // 最大射线探测距离（格）
-
-    for (int d = 0; d < 8; ++d) {
-        int ray_dist = 0;
-        for (int step = 1; step <= kMaxRayLen; ++step) {
-            int nx = gx + ray_dx[d] * step;
-            int ny = gy + ray_dy[d] * step;
-            if (!session.IsWalkable(nx, ny)) break;
-            ray_dist = step;
+    // [5-12] 八方向射线障碍物检测（使用 Client 端传来的射线特征）
+    if (client_obs.size() >= 8) {
+        for (int d = 0; d < 8; ++d) {
+            obs[5 + d] = client_obs[d];
         }
-        obs[5 + d] = static_cast<float>(ray_dist) / kMaxRayLen;
     }
+    // 若 Client 未传射线数据（向后兼容），射线维度保持 0.0
 }
 
 // ---- 收集单帧样本 ----
 void MazeServiceImpl::CollectSample(SessionManager::Session& session,
                                     int agent_id, int gx, int gy,
                                     int action, float old_log_prob,
-                                    float old_vpred, bool is_done) {
+                                    float old_vpred, bool is_done,
+                                    const std::vector<float>& client_obs) {
     // 构建观测向量
     std::vector<float> obs;
-    BuildObs(session, gx, gy, obs);
+    BuildObs(session, gx, gy, client_obs, obs);
 
     // 计算奖励（独立模块，含分项明细）
     int agent_num = static_cast<int>(session.agents.size());
@@ -364,8 +358,10 @@ grpc::Status MazeServiceImpl::Init(grpc::ServerContext* ctx,
         }
     }
 
-    // 初始化网格障碍物（训练模式下用于射线检测构建 obs）
-    session->InitBlocked(gs);
+    // 初始化网格障碍物（仅 A* 测试模式需要，训练/推理模式不需要地图数据）
+    if (config_.server.run_mode == 3) {
+        session->InitBlocked(gs);
+    }
 
     session->initialized = true;
     rsp->set_ret_code(0);
@@ -408,6 +404,9 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
         int cur_gx = static_cast<int>(pos_x);
         int cur_gy = static_cast<int>(pos_y);
 
+        // 提取 Client 端传来的射线观测特征
+        std::vector<float> client_obs(state.obs().begin(), state.obs().end());
+
         LOG_FILE("RPC:Update", "  S:%d Agent[%d]: pos=(%.1f,%.1f) grid=(%d,%d) done=%s",
                  session_id, agent_id, pos_x, pos_y, cur_gx, cur_gy,
                  is_done ? "true" : "false");
@@ -438,7 +437,7 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
                              it->second.reached_goal ? "true" : "false", frame_id);
 
                     CollectSample(*session, agent_id, cur_gx, cur_gy,
-                                  0, -2.197f, 0.0f, true);
+                                  0, -2.197f, 0.0f, true, client_obs);
                     it->second.prev_grid_x = cur_gx;
                     it->second.prev_grid_y = cur_gy;
                     LOG_FILE("RPC:Update", "  S:%d Agent[%d]: 终止帧样本已收集 (done rank=#%d)",
@@ -490,7 +489,7 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
             if (onnx_inferencer_.IsLoaded()) {
                 // ONNX 模型推理
                 std::vector<float> obs;
-                BuildObs(*session, cur_gx, cur_gy, obs);
+                BuildObs(*session, cur_gx, cur_gy, client_obs, obs);
 
                 std::vector<float> action_probs;
                 float value = 0.0f;
@@ -522,7 +521,7 @@ grpc::Status MazeServiceImpl::Update(grpc::ServerContext* ctx,
             // 训练模式：收集样本
             if (config_.server.run_mode == 1) {
                 CollectSample(*session, agent_id, cur_gx, cur_gy,
-                              chosen_action, old_log_prob, old_vpred, is_done);
+                              chosen_action, old_log_prob, old_vpred, is_done, client_obs);
                 agent.prev_grid_x = cur_gx;
                 agent.prev_grid_y = cur_gy;
             }

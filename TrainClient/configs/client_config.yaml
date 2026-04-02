@@ -20,6 +20,8 @@ env:
   start_y: 500.0                  # 起点 Y 坐标 (cm)，Agent 每个 Episode 的初始 Y 位置
   end_x: 19500.0                  # 终点 X 坐标 (cm)，目标点的 X 位置
   end_y: 19500.0                  # 终点 Y 坐标 (cm)，目标点的 Y 位置
+  map_file: ""                    # 地图 JSON 文件路径（为空则从 map_dir 随机选取或使用默认墙壁，示例: "maps/save/maze_42.json"）
+  map_dir: "maps/test"            # 地图目录路径，目录下有 .json 文件则随机选取一个加载（优先级低于 map_file）
 
 # --- 网络参数（Client 与 AIServer 的 gRPC 通信配置）---
 network:

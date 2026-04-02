@@ -44,9 +44,10 @@ message InitRsp {
 
 // 单个 Agent 的帧状态
 message AgentState {
-    int32 agent_id = 1; // Agent 唯一标识
-    Vec2  pos      = 2; // 当前位置
-    bool  is_done  = 3; // 是否已结束（到达终点或超时）
+    int32 agent_id      = 1; // Agent 唯一标识
+    Vec2  pos           = 2; // 当前位置
+    bool  is_done       = 3; // 是否已结束（到达终点或超时）
+    repeated float obs  = 4; // Client 端计算的观测特征（8 方向射线归一化距离）
 }
 
 // 帧状态上报请求：TrainClient 每帧发送所有 Agent 的状态

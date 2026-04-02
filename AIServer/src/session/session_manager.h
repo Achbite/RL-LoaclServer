@@ -58,10 +58,10 @@ public:
 
         bool initialized = false;       // 是否已初始化
 
-        // --- 网格障碍物（true=不可通行，用于射线检测）---
+        // --- 网格障碍物（true=不可通行，仅 A* 测试模式使用）---
         std::vector<bool> blocked;
 
-        // 初始化网格障碍物（Init RPC 时调用）
+        // 初始化网格障碍物（仅 A* 测试模式调用，硬编码默认墙壁）
         void InitBlocked(int grid_size) {
             blocked.assign(grid_cols * grid_rows, false);
             // 内部隔墙（与 TrainClient 端 LoadWalls 一致）
