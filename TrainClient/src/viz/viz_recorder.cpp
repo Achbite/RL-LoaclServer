@@ -3,6 +3,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <sys/stat.h>
 
 // ---- 递归创建目录（等效 mkdir -p）----
 static bool MkdirRecursive(const std::string& path) {
@@ -30,7 +31,9 @@ VizRecorder::~VizRecorder() {
 }
 
 // ---- 开始新 Episode 的记录 ----
-bool VizRecorder::Begin(const std::string& output_dir, int episode_id) {
+bool VizRecorder::Begin(const std::string& output_dir, int episode_id,
+                         const std::string& map_id,
+                         const std::string& map_source_path) {
     // 关闭上一个 Episode 的文件（如果有）
     End();
 
@@ -61,6 +64,12 @@ bool VizRecorder::Begin(const std::string& output_dir, int episode_id) {
     }
 
     LOG_DEBUG("VizRecorder", "开始记录: %s", filename);
+
+    // 复制地图文件到 output_dir/maps/ 目录（供播放器独立加载）
+    if (!map_id.empty() && !map_source_path.empty()) {
+        CopyMapFile(map_id, map_source_path);
+    }
+
     return true;
 }
 
@@ -71,8 +80,8 @@ void VizRecorder::RecordFrame(const std::string& json_line) {
     std::fprintf(file_, "%s\n", json_line.c_str());
     ++frame_count_;
 
-    // 每 100 帧刷新一次缓冲区
-    if (frame_count_ % 100 == 0) {
+    // 每 10 帧刷新一次缓冲区（配合 Live 播放模式，降低可视化延迟）
+    if (frame_count_ % 10 == 0) {
         std::fflush(file_);
     }
 }
@@ -86,4 +95,44 @@ void VizRecorder::End() {
         LOG_DEBUG("VizRecorder", "记录结束: %d 帧", frame_count_);
     }
     frame_count_ = 0;
+}
+
+// ---- 复制地图文件到 output_dir/maps/ 目录 ----
+void VizRecorder::CopyMapFile(const std::string& map_id, const std::string& source_path) {
+    // 目标目录：output_dir_/maps/
+    std::string maps_dir = output_dir_ + "/maps";
+    MkdirRecursive(maps_dir);
+
+    // 目标文件：maps/{map_id}.json
+    std::string dest_path = maps_dir + "/" + map_id + ".json";
+
+    // 已存在则跳过（同一地图不重复复制）
+    struct stat st;
+    if (stat(dest_path.c_str(), &st) == 0) {
+        return;
+    }
+
+    // 复制文件
+    FILE* src = std::fopen(source_path.c_str(), "rb");
+    if (!src) {
+        LOG_WARN("VizRecorder", "无法打开地图源文件: %s", source_path.c_str());
+        return;
+    }
+
+    FILE* dst = std::fopen(dest_path.c_str(), "wb");
+    if (!dst) {
+        std::fclose(src);
+        LOG_WARN("VizRecorder", "无法创建地图目标文件: %s", dest_path.c_str());
+        return;
+    }
+
+    char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), src)) > 0) {
+        std::fwrite(buf, 1, n, dst);
+    }
+
+    std::fclose(src);
+    std::fclose(dst);
+    LOG_INFO("VizRecorder", "地图文件已复制: %s -> %s", source_path.c_str(), dest_path.c_str());
 }

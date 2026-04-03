@@ -19,7 +19,8 @@ static const char* kActionNames[9] = {
 };
 
 // ---- 构建可视化 JSON 数据 ----
-static std::string BuildVizJson(const MazeEnv& env, const ClientConfig& cfg,
+// 帧数据不再存储任何地图信息，只存 map_id 引用，地图文件由播放器独立加载
+static std::string BuildVizJson(const MazeEnv& env,
                                 int frame_id, int episode_id,
                                 const std::vector<int>& actions) {
     std::ostringstream ss;
@@ -30,31 +31,8 @@ static std::string BuildVizJson(const MazeEnv& env, const ClientConfig& cfg,
     ss << "\"frame_id\":" << frame_id << ",";
     ss << "\"episode_id\":" << episode_id << ",";
 
-    // 地图信息
-    ss << "\"map\":{";
-    ss << "\"width\":" << env.GetMapWidth() << ",";
-    ss << "\"height\":" << env.GetMapHeight() << ",";
-    ss << "\"grid_count\":" << env.GetGridCols() << ",";
-    ss << "\"grid_size\":" << env.GetGridSize() << ",";
-
-    // 起点
-    ss << "\"start_pos\":{\"x\":" << env.GetStartX() << ",\"y\":" << env.GetStartY() << "},";
-
-    // 终点
-    ss << "\"end_pos\":{\"x\":" << env.GetEndX() << ",\"y\":" << env.GetEndY() << "},";
-
-    // 墙壁（从 MazeEnv 动态获取）
-    ss << "\"walls\":[";
-    const auto& walls = env.GetWalls();
-    for (size_t i = 0; i < walls.size(); ++i) {
-        if (i > 0) ss << ",";
-        ss << "{\"x1\":" << walls[i].x1
-           << ",\"y1\":" << walls[i].y1
-           << ",\"x2\":" << walls[i].x2
-           << ",\"y2\":" << walls[i].y2
-           << ",\"thickness\":" << walls[i].thickness << "}";
-    }
-    ss << "]},";
+    // 地图引用（仅存 map_id，播放器通过 /api/map 接口加载完整地图）
+    ss << "\"map_id\":\"" << env.GetMapId() << "\",";
 
     // Agent 列表（网格坐标转换为连续坐标用于可视化）
     ss << "\"agents\":[";
@@ -146,7 +124,8 @@ int main(int argc, char* argv[]) {
 
         // 开始帧数据记录
         if (cfg.viz.enabled) {
-            viz_recorder.Begin(cfg.viz.output_dir, ep);
+            viz_recorder.Begin(cfg.viz.output_dir, ep,
+                               env.GetMapId(), env.GetMapFilePath());
         }
 
         // 每帧记录各 Agent 的动作（用于可视化）
@@ -220,7 +199,7 @@ int main(int argc, char* argv[]) {
             // ---- 5e. 记录帧数据（切片记录，用于离线回放）----
             if (cfg.viz.enabled) {
                 if (env.GetFrameId() % cfg.viz.interval == 0) {
-                    std::string json = BuildVizJson(env, cfg, env.GetFrameId(), ep, last_actions);
+                    std::string json = BuildVizJson(env, env.GetFrameId(), ep, last_actions);
                     viz_recorder.RecordFrame(json);
                 }
             }

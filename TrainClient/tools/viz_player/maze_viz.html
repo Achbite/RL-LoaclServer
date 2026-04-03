@@ -260,6 +260,22 @@ canvas {
     z-index: 10;
 }
 .loading-overlay.hidden { display: none; }
+
+/* Live 按钮样式 */
+#btnLive {
+    background: #1a237e;
+    color: #9fa8da;
+    transition: all 0.2s;
+}
+#btnLive.active {
+    background: #b71c1c;
+    color: #ffcdd2;
+    animation: live-pulse 1.5s ease-in-out infinite;
+}
+@keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
 </style>
 </head>
 <body>
@@ -304,6 +320,7 @@ canvas {
                     <button class="btn btn-play" id="btnPlay" onclick="togglePlay()" disabled>▶ 播放</button>
                     <button class="btn btn-step" id="btnNext" onclick="stepNext()" disabled title="下一帧">▶</button>
                     <button class="btn btn-reset" id="btnReset" onclick="resetPlay()" disabled>⏮ 重置</button>
+                    <button class="btn" id="btnLive" onclick="toggleLiveMode()" style="display:none;">📡 Live</button>
                 </div>
                 <div class="slider-section">
                     <input type="range" id="frameSlider" min="0" max="0" value="0" oninput="seekFrame(this.value)" disabled>
@@ -385,14 +402,30 @@ canvas {
 // ============================================================================
 // 全局状态
 // ============================================================================
-let frames = [];           // 所有帧数据
-let currentIndex = 0;      // 当前帧索引
+let frames = [];           // 当前缓冲区中的帧数据
+let bufferOffset = 0;      // 缓冲区起始帧在全局中的偏移
+let totalFrameCount = 0;   // 文件总帧数
+let currentIndex = 0;      // 当前帧索引（全局索引）
 let isPlaying = false;     // 是否正在播放
 let playTimer = null;      // 播放定时器
 let playInterval = 100;    // 播放间隔（ms）
 let isConnected = false;   // 服务器连接状态
 let fileListTimer = null;  // 文件列表自动刷新定时器
 let currentFile = '';      // 当前选中的文件名
+let cachedMap = null;      // 缓存的完整地图数据（通过 /api/map 加载）
+let currentMapId = '';     // 当前地图 ID
+let isLoading = false;     // 是否正在加载帧数据（防止重复请求）
+
+// Live 播放模式状态
+let liveMode = false;      // 是否处于 Live 模式
+let liveTimer = null;      // Live 轮询定时器
+let lastKnownLines = 0;    // 上次已知的文件总行数
+let userDragging = false;  // 用户是否正在拖拽进度条
+
+// 分页加载参数
+const BUFFER_SIZE = 400;          // 缓冲区大小（帧数）
+const PREFETCH_THRESHOLD = 100;   // 距缓冲区边界多少帧时触发预加载
+const PAGE_SIZE = 400;            // 每次请求的帧数
 
 // Agent 颜色表
 const AGENT_COLORS = [
@@ -480,8 +513,111 @@ async function refreshFileList() {
         if (prevValue) {
             select.value = prevValue;
         }
+
+        // 如果当前选中的文件正在写入，显示 Live 按钮
+        const currentFileInfo = files.find(f => f.name === currentFile);
+        const liveBtn = document.getElementById('btnLive');
+        if (currentFileInfo && currentFileInfo.is_growing) {
+            liveBtn.style.display = 'inline-block';
+        } else if (!liveMode) {
+            liveBtn.style.display = 'none';
+        }
     } catch (e) {
         setConnected(false);
+    }
+}
+
+// ---- 分页加载帧数据 ----
+// append: 为 true 时追加到缓冲区末尾（预加载用），为 false 时替换缓冲区
+async function loadFrameRange(offset, limit, append = false) {
+    if (isLoading) return false;
+    isLoading = true;
+
+    try {
+        const url = `${getApiBase()}/api/frames?file=${encodeURIComponent(currentFile)}&offset=${offset}&limit=${limit}`;
+        const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
+        if (!resp.ok) {
+            isLoading = false;
+            return false;
+        }
+
+        const data = await resp.json();
+        const newFrames = data.frames || [];
+        totalFrameCount = data.total_frames;
+
+        if (append && offset === bufferOffset + frames.length) {
+            // 追加模式：拼接到缓冲区末尾
+            frames = frames.concat(newFrames);
+            // 缓冲区过大时裁剪前端（保留最近 BUFFER_SIZE * 2 帧）
+            const maxBuffer = BUFFER_SIZE * 2;
+            if (frames.length > maxBuffer) {
+                const trim = frames.length - maxBuffer;
+                frames = frames.slice(trim);
+                bufferOffset += trim;
+            }
+        } else {
+            // 替换模式
+            frames = newFrames;
+            bufferOffset = offset;
+        }
+
+        // 检测新格式：帧数据含 map_id 字段，通过 /api/map 加载地图
+        if (newFrames.length > 0 && newFrames[0].map_id && !cachedMap) {
+            await loadMapById(newFrames[0].map_id);
+        }
+
+        // 向后兼容：旧格式帧数据含 map.walls，直接缓存
+        if (!cachedMap && offset === 0 && newFrames.length > 0 && newFrames[0].map && newFrames[0].map.walls) {
+            cachedMap = JSON.parse(JSON.stringify(newFrames[0].map));
+        }
+
+        isLoading = false;
+        return true;
+    } catch (e) {
+        console.error('加载帧数据失败:', e);
+        isLoading = false;
+        return false;
+    }
+}
+
+// ---- 通过 map_id 加载地图数据 ----
+async function loadMapById(mapId) {
+    if (currentMapId === mapId && cachedMap) return;  // 已缓存
+    try {
+        const resp = await fetch(
+            `${getApiBase()}/api/map?id=${encodeURIComponent(mapId)}`,
+            { signal: AbortSignal.timeout(30000) }
+        );
+        if (resp.ok) {
+            cachedMap = await resp.json();
+            currentMapId = mapId;
+            console.log(`地图已加载: ${mapId}`);
+        } else {
+            console.error(`加载地图失败: ${mapId}`);
+        }
+    } catch (e) {
+        console.error('加载地图异常:', e);
+    }
+}
+
+// ---- 从缓冲区获取帧数据 ----
+function getFrameFromBuffer(globalIndex) {
+    const localIndex = globalIndex - bufferOffset;
+    if (localIndex >= 0 && localIndex < frames.length) {
+        return frames[localIndex];
+    }
+    return null;
+}
+
+// ---- 检查是否需要预加载 ----
+function checkPrefetch(globalIndex) {
+    const localIndex = globalIndex - bufferOffset;
+    const distToEnd = frames.length - localIndex;
+
+    // 接近缓冲区末尾，向后追加预加载
+    if (distToEnd < PREFETCH_THRESHOLD && (bufferOffset + frames.length) < totalFrameCount) {
+        const newOffset = bufferOffset + frames.length;
+        loadFrameRange(newOffset, PAGE_SIZE, true);  // 追加模式
     }
 }
 
@@ -491,39 +627,55 @@ async function onFileSelected() {
     const filename = select.value;
     if (!filename) return;
 
+    // 停止之前的 Live 模式
+    stopLiveMode();
     currentFile = filename;
-    showLoading(true);
+    cachedMap = null;
+    currentMapId = '';
+    showLoading(true, '正在加载文件信息...');
 
     try {
-        const resp = await fetch(getApiBase() + '/api/frames?file=' + encodeURIComponent(filename), {
-            signal: AbortSignal.timeout(30000)
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            alert('加载失败: ' + (err.error || '未知错误'));
+        // 1. 获取文件状态（总行数 + 是否在写入）
+        //    首次打开大文件时服务端需构建行偏移索引，可能耗时较长，超时设为 120 秒
+        const statusResp = await fetch(
+            `${getApiBase()}/api/file_status?file=${encodeURIComponent(filename)}`,
+            { signal: AbortSignal.timeout(120000) }
+        );
+        if (!statusResp.ok) {
+            const err = await statusResp.json();
+            alert('获取文件状态失败: ' + (err.error || '未知错误'));
             showLoading(false);
             return;
         }
+        const fileStatus = await statusResp.json();
+        totalFrameCount = fileStatus.total_lines;
+        lastKnownLines = totalFrameCount;
 
-        const data = await resp.json();
-        frames = data.frames || [];
-
-        if (frames.length === 0) {
+        if (totalFrameCount === 0) {
             alert('文件中没有有效的帧数据');
             showLoading(false);
             return;
         }
 
-        // 更新文件元信息
-        document.getElementById('fileMeta').textContent =
-            `共 ${frames.length} 帧`;
+        // 2. 加载首批帧数据（含首帧完整地图）
+        showLoading(true, '加载帧数据中...');
+        const success = await loadFrameRange(0, PAGE_SIZE);
+        if (!success || frames.length === 0) {
+            alert('加载帧数据失败');
+            showLoading(false);
+            return;
+        }
 
-        // 初始化播放控制
+        // 3. 更新文件元信息
+        document.getElementById('fileMeta').textContent =
+            `共 ${totalFrameCount} 帧`;
+
+        // 4. 初始化播放控制
         currentIndex = 0;
-        document.getElementById('frameSlider').max = frames.length - 1;
+        document.getElementById('frameSlider').max = totalFrameCount - 1;
         document.getElementById('frameSlider').value = 0;
         document.getElementById('frameSlider').disabled = false;
-        document.getElementById('totalFrames').textContent = frames.length;
+        document.getElementById('totalFrames').textContent = totalFrameCount;
 
         // 启用按钮
         document.getElementById('btnPlay').disabled = false;
@@ -531,7 +683,15 @@ async function onFileSelected() {
         document.getElementById('btnPrev').disabled = false;
         document.getElementById('btnReset').disabled = false;
 
-        // 显示第一帧
+        // 5. 如果文件正在写入，显示 Live 按钮
+        const liveBtn = document.getElementById('btnLive');
+        if (fileStatus.is_growing) {
+            liveBtn.style.display = 'inline-block';
+        } else {
+            liveBtn.style.display = 'none';
+        }
+
+        // 6. 显示第一帧
         showFrame(0);
         showLoading(false);
     } catch (e) {
@@ -541,8 +701,10 @@ async function onFileSelected() {
 }
 
 // ---- 显示/隐藏加载遮罩 ----
-function showLoading(show) {
+function showLoading(show, text) {
     const overlay = document.getElementById('loadingOverlay');
+    if (text) overlay.textContent = text;
+    else if (show) overlay.textContent = '加载中...';
     overlay.className = show ? 'loading-overlay' : 'loading-overlay hidden';
 }
 
@@ -558,33 +720,61 @@ function togglePlay() {
 }
 
 function startPlay() {
-    if (frames.length === 0) return;
+    if (totalFrameCount === 0) return;
     isPlaying = true;
     document.getElementById('btnPlay').textContent = '⏸ 暂停';
-    playTimer = setInterval(() => {
-        if (currentIndex < frames.length - 1) {
+
+    // 使用 setTimeout 链式调用代替 setInterval，避免异步回调堆积
+    async function playStep() {
+        if (!isPlaying) return;
+
+        if (currentIndex < totalFrameCount - 1) {
             currentIndex++;
+            // 检查缓冲区是否命中
+            let frame = getFrameFromBuffer(currentIndex);
+            if (!frame) {
+                // 缓冲区未命中，暂停播放并加载
+                pausePlay();
+                showLoading(true, '加载帧数据中...');
+                const success = await loadFrameRange(currentIndex, PAGE_SIZE);
+                showLoading(false);
+                if (success) {
+                    showFrame(currentIndex);
+                    startPlay();
+                }
+                return;
+            }
             showFrame(currentIndex);
+        } else if (liveMode) {
+            // Live 模式下播放到末尾，等待新帧
         } else {
             pausePlay();
+            return;
         }
-    }, playInterval);
+
+        // 链式调用下一步
+        if (isPlaying) {
+            playTimer = setTimeout(playStep, playInterval);
+        }
+    }
+
+    playTimer = setTimeout(playStep, playInterval);
 }
 
 function pausePlay() {
     isPlaying = false;
     document.getElementById('btnPlay').textContent = '▶ 播放';
     if (playTimer) {
-        clearInterval(playTimer);
+        clearTimeout(playTimer);
         playTimer = null;
     }
 }
 
 function stepNext() {
     pausePlay();
-    if (currentIndex < frames.length - 1) {
+    if (currentIndex < totalFrameCount - 1) {
         currentIndex++;
-        showFrame(currentIndex);
+        ensureFrameAndShow(currentIndex);
     }
 }
 
@@ -592,20 +782,26 @@ function stepPrev() {
     pausePlay();
     if (currentIndex > 0) {
         currentIndex--;
-        showFrame(currentIndex);
+        ensureFrameAndShow(currentIndex);
     }
 }
 
 function resetPlay() {
     pausePlay();
+    stopLiveMode();
     currentIndex = 0;
-    showFrame(0);
+    // 如果首批数据不在缓冲区，重新加载
+    if (bufferOffset !== 0) {
+        loadFrameRange(0, PAGE_SIZE).then(() => showFrame(0));
+    } else {
+        showFrame(0);
+    }
 }
 
-function seekFrame(val) {
+async function seekFrame(val) {
     pausePlay();
     currentIndex = parseInt(val);
-    showFrame(currentIndex);
+    await ensureFrameAndShow(currentIndex);
 }
 
 function changeSpeed() {
@@ -616,21 +812,136 @@ function changeSpeed() {
     }
 }
 
+// ---- 确保帧在缓冲区中并显示 ----
+async function ensureFrameAndShow(globalIndex) {
+    let frame = getFrameFromBuffer(globalIndex);
+    if (!frame) {
+        // 缓冲区未命中，以目标帧为中心加载
+        showLoading(true);
+        const loadOffset = Math.max(0, globalIndex - Math.floor(PAGE_SIZE / 4));
+        await loadFrameRange(loadOffset, PAGE_SIZE);
+        showLoading(false);
+    }
+    showFrame(globalIndex);
+}
+
+// ============================================================================
+// Live 播放模式
+// ============================================================================
+function toggleLiveMode() {
+    if (liveMode) {
+        stopLiveMode();
+    } else {
+        startLiveMode();
+    }
+}
+
+function startLiveMode() {
+    liveMode = true;
+    const btn = document.getElementById('btnLive');
+    btn.textContent = '🔴 LIVE';
+    btn.classList.add('active');
+
+    // 跳到最新帧
+    if (totalFrameCount > 0) {
+        currentIndex = totalFrameCount - 1;
+        ensureFrameAndShow(currentIndex);
+    }
+
+    // 每 500ms 轮询文件状态
+    liveTimer = setInterval(async () => {
+        if (!currentFile) return;
+
+        try {
+            const resp = await fetch(
+                `${getApiBase()}/api/file_status?file=${encodeURIComponent(currentFile)}`,
+                { signal: AbortSignal.timeout(3000) }
+            );
+            if (!resp.ok) return;
+            const status = await resp.json();
+
+            if (status.total_lines > lastKnownLines) {
+                // 有新帧，加载增量数据
+                const newOffset = lastKnownLines;
+                const newCount = status.total_lines - lastKnownLines;
+
+                const framesResp = await fetch(
+                    `${getApiBase()}/api/frames?file=${encodeURIComponent(currentFile)}&offset=${newOffset}&limit=${newCount}`,
+                    { signal: AbortSignal.timeout(10000) }
+                );
+                if (framesResp.ok) {
+                    const data = await framesResp.json();
+                    if (data.frames && data.frames.length > 0) {
+                        // 追加到缓冲区末尾（如果连续）
+                        if (newOffset === bufferOffset + frames.length) {
+                            frames = frames.concat(data.frames);
+                        } else {
+                            // 不连续，替换缓冲区为最新数据
+                            frames = data.frames;
+                            bufferOffset = newOffset;
+                        }
+                    }
+                    totalFrameCount = data.total_frames;
+                }
+
+                lastKnownLines = status.total_lines;
+
+                // 更新进度条范围
+                document.getElementById('frameSlider').max = totalFrameCount - 1;
+                document.getElementById('totalFrames').textContent = totalFrameCount;
+                document.getElementById('fileMeta').textContent = `共 ${totalFrameCount} 帧`;
+
+                // Live 模式下自动跳到最新帧（除非用户正在拖拽）
+                if (liveMode && !userDragging && !isPlaying) {
+                    currentIndex = totalFrameCount - 1;
+                    showFrame(currentIndex);
+                }
+            }
+
+            // 文件不再增长时自动退出 Live 模式
+            if (!status.is_growing) {
+                stopLiveMode();
+            }
+        } catch (e) {
+            console.error('Live 轮询失败:', e);
+        }
+    }, 500);
+}
+
+function stopLiveMode() {
+    liveMode = false;
+    const btn = document.getElementById('btnLive');
+    btn.textContent = '📡 Live';
+    btn.classList.remove('active');
+
+    if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+    }
+}
+
 // ============================================================================
 // 显示指定帧
 // ============================================================================
 function showFrame(index) {
-    if (index < 0 || index >= frames.length) return;
+    if (index < 0 || index >= totalFrameCount) return;
 
-    const data = frames[index];
+    const data = getFrameFromBuffer(index);
+    if (!data) return;
+
     document.getElementById('frameSlider').value = index;
-    document.getElementById('frameLabel').textContent = `${index + 1} / ${frames.length}`;
+    document.getElementById('frameLabel').textContent =
+        `${index + 1} / ${totalFrameCount}${liveMode ? ' 🔴' : ''}`;
 
     // 更新信息面板
     document.getElementById('frameId').textContent = data.frame_id || '--';
     document.getElementById('episodeId').textContent = data.episode_id !== undefined ? data.episode_id : '--';
 
-    if (data.map) {
+    if (cachedMap) {
+        const w = cachedMap.bounds ? cachedMap.bounds.x_max : (cachedMap.width || '--');
+        const h = cachedMap.bounds ? cachedMap.bounds.y_max : (cachedMap.height || '--');
+        document.getElementById('mapSize').textContent = `${w} × ${h}`;
+    } else if (data.map) {
         document.getElementById('mapSize').textContent = `${data.map.width} × ${data.map.height}`;
     }
 
@@ -655,8 +966,36 @@ function showFrame(index) {
         agentList.innerHTML = html;
     }
 
+    // 构建渲染数据：新格式用 cachedMap，旧格式用帧内 map + walls 补全
+    let renderData = data;
+    if (cachedMap && !data.map) {
+        // 新格式：帧数据无 map 字段，使用独立加载的地图数据构建渲染对象
+        renderData = Object.assign({}, data, {
+            map: {
+                width: cachedMap.bounds ? cachedMap.bounds.x_max : 50000,
+                height: cachedMap.bounds ? cachedMap.bounds.y_max : 50000,
+                grid_count: cachedMap.grid_count,
+                grid_size: cachedMap.grid_size,
+                start_pos: cachedMap.start_pos,
+                end_pos: cachedMap.end_pos,
+                walls: cachedMap.walls
+            }
+        });
+    } else if (data.map && !data.map.walls && cachedMap) {
+        // 旧格式过渡：帧有 map 但无 walls，从缓存补全
+        const walls = cachedMap.walls || (cachedMap.map && cachedMap.map.walls);
+        if (walls) {
+            renderData = Object.assign({}, data, {
+                map: Object.assign({}, data.map, { walls: walls })
+            });
+        }
+    }
+
     // 触发渲染
-    renderFrame(data);
+    renderFrame(renderData);
+
+    // 检查预加载
+    checkPrefetch(index);
 }
 
 // ============================================================================
@@ -670,8 +1009,31 @@ function resizeCanvas() {
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
     // 重新渲染当前帧
-    if (frames.length > 0 && currentIndex < frames.length) {
-        renderFrame(frames[currentIndex]);
+    const frame = getFrameFromBuffer(currentIndex);
+    if (frame) {
+        // 构建渲染数据
+        let renderData = frame;
+        if (cachedMap && !frame.map) {
+            renderData = Object.assign({}, frame, {
+                map: {
+                    width: cachedMap.bounds ? cachedMap.bounds.x_max : 50000,
+                    height: cachedMap.bounds ? cachedMap.bounds.y_max : 50000,
+                    grid_count: cachedMap.grid_count,
+                    grid_size: cachedMap.grid_size,
+                    start_pos: cachedMap.start_pos,
+                    end_pos: cachedMap.end_pos,
+                    walls: cachedMap.walls
+                }
+            });
+        } else if (frame.map && !frame.map.walls && cachedMap) {
+            const walls = cachedMap.walls || (cachedMap.map && cachedMap.map.walls);
+            if (walls) {
+                renderData = Object.assign({}, frame, {
+                    map: Object.assign({}, frame.map, { walls: walls })
+                });
+            }
+        }
+        renderFrame(renderData);
     }
 }
 
@@ -919,8 +1281,16 @@ renderFrame(null);
 })();
 
 // 键盘快捷键
+// 进度条拖拽事件（Live 模式下拖拽时暂停自动跟随）
+const slider = document.getElementById('frameSlider');
+slider.addEventListener('mousedown', () => { userDragging = true; });
+slider.addEventListener('mouseup', () => { userDragging = false; });
+slider.addEventListener('touchstart', () => { userDragging = true; });
+slider.addEventListener('touchend', () => { userDragging = false; });
+
+// 键盘快捷键
 document.addEventListener('keydown', (e) => {
-    if (frames.length === 0) return;
+    if (totalFrameCount === 0) return;
     switch (e.key) {
         case ' ':
             e.preventDefault();

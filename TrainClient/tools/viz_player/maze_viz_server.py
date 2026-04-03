@@ -9,10 +9,13 @@
     python3 tools/viz_player/maze_viz_server.py [--dir log/viz] [--port 9004]
 
 API 接口：
-    GET /                    → 返回可视化播放器页面（maze_viz.html）
-    GET /api/files           → 列出回放目录下所有 .jsonl 文件
-    GET /api/frames?file=xxx → 加载指定文件的全部帧数据
-    GET /api/status          → 服务状态信息
+    GET /                                → 返回可视化播放器页面（maze_viz.html）
+    GET /api/files                       → 列出回放目录下所有 .jsonl 文件
+    GET /api/frames?file=xxx&offset=N&limit=M → 分页加载帧数据（默认 offset=0, limit=200）
+    GET /api/frame_count?file=xxx        → 快速返回文件总行数（不解析 JSON）
+    GET /api/file_status?file=xxx        → 文件实时状态（行数、大小、是否在写入）
+    GET /api/map?id=xxx                  → 加载地图 JSON 文件（从 maps/ 目录读取）
+    GET /api/status                      → 服务状态信息
 """
 
 import json
@@ -28,14 +31,19 @@ from urllib.parse import urlparse, parse_qs
 
 
 class VizReplayServer:
-    """回放文件管理器，负责扫描目录、读取帧数据。"""
+    """回放文件管理器，负责扫描目录、分页读取帧数据、提供文件状态。"""
 
     def __init__(self, replay_dir):
         self.replay_dir = os.path.abspath(replay_dir)
         self.lock = threading.Lock()
-        self._file_cache = {}           # 文件名 → 帧数据列表（缓存已加载的文件）
+        # 行偏移索引缓存：文件名 → {mtime, size, line_offsets: [字节偏移列表]}
+        self._index_cache = {}
         self._file_list_cache = None    # 文件列表缓存
         self._file_list_time = 0        # 文件列表缓存时间
+        # 地图文件缓存：map_id → 地图 JSON 对象
+        self._map_cache = {}
+        # 地图目录：replay_dir/maps/
+        self.maps_dir = os.path.join(self.replay_dir, "maps")
 
         # 确保目录存在
         os.makedirs(self.replay_dir, exist_ok=True)
@@ -56,8 +64,11 @@ class VizReplayServer:
             try:
                 stat = os.stat(f)
                 name = os.path.basename(f)
-                # 尝试从缓存获取帧数
-                frame_count = len(self._file_cache[name]) if name in self._file_cache else None
+                # 尝试从索引缓存获取帧数
+                frame_count = None
+                if name in self._index_cache:
+                    cached = self._index_cache[name]
+                    frame_count = len(cached["line_offsets"])
                 result.append({
                     "name": name,
                     "size_kb": round(stat.st_size / 1024, 1),
@@ -72,55 +83,126 @@ class VizReplayServer:
         self._file_list_time = now
         return result
 
-    def load_frames(self, filename):
-        """加载指定文件的全部帧数据。带缓存，重复请求不重新读取。"""
-        # 安全检查：防止路径穿越
+    def _validate_filename(self, filename):
+        """安全检查：防止路径穿越。返回 (filepath, error)。"""
         if '..' in filename or '/' in filename or '\\' in filename:
             return None, "非法文件名"
-
         filepath = os.path.join(self.replay_dir, filename)
         if not os.path.exists(filepath):
             return None, f"文件不存在: {filename}"
+        return filepath, None
+
+    def _build_line_index(self, filename, filepath):
+        """构建或增量更新行偏移索引。返回 line_offsets 列表。
+        
+        使用二进制模式逐行读取 + 大缓冲区（1MB），对大文件性能显著优于默认缓冲。
+        """
+        try:
+            current_mtime = os.path.getmtime(filepath)
+            current_size = os.path.getsize(filepath)
+        except OSError:
+            return []
 
         with self.lock:
-            # 检查缓存（如果文件仍在写入则不使用缓存）
-            try:
-                current_mtime = os.path.getmtime(filepath)
-                current_size = os.path.getsize(filepath)
-            except OSError:
-                return None, f"无法读取文件: {filename}"
+            cached = self._index_cache.get(filename)
 
-            cache_key = filename
-            if cache_key in self._file_cache:
-                cached = self._file_cache[cache_key]
-                # 如果文件大小和修改时间未变，使用缓存
-                if cached.get("_mtime") == current_mtime and cached.get("_size") == current_size:
-                    return cached["frames"], None
+            # 缓存命中且文件未变化
+            if cached and cached["mtime"] == current_mtime and cached["size"] == current_size:
+                return cached["line_offsets"]
 
-            # 读取文件
-            frames = []
+            # 增量更新：文件增长时从上次位置继续扫描
+            if cached and cached["size"] <= current_size:
+                line_offsets = cached["line_offsets"][:]
+                start_pos = cached["size"]
+            else:
+                # 全量重建
+                line_offsets = []
+                start_pos = 0
+
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    for line_num, line in enumerate(f, 1):
-                        line = line.strip()
-                        if not line:
-                            continue
+                # 使用 1MB 缓冲区加速大文件读取
+                with open(filepath, 'rb', buffering=1048576) as f:
+                    f.seek(start_pos)
+                    offset = start_pos
+                    for line in f:
+                        if line.strip():
+                            line_offsets.append(offset)
+                        offset += len(line)
+            except Exception as e:
+                print(f"[VizServer] 构建索引失败 {filename}: {e}")
+                return line_offsets
+
+            # 更新缓存
+            self._index_cache[filename] = {
+                "mtime": current_mtime,
+                "size": current_size,
+                "line_offsets": line_offsets,
+            }
+
+            return line_offsets
+
+    def get_frame_count(self, filename):
+        """快速返回文件总帧数（不解析 JSON 内容）。"""
+        filepath, error = self._validate_filename(filename)
+        if error:
+            return None, error
+
+        line_offsets = self._build_line_index(filename, filepath)
+        return len(line_offsets), None
+
+    def load_frames_paged(self, filename, offset=0, limit=200):
+        """分页加载帧数据。通过行偏移索引精准 seek，内存占用恒定。"""
+        filepath, error = self._validate_filename(filename)
+        if error:
+            return None, 0, error
+
+        line_offsets = self._build_line_index(filename, filepath)
+        total = len(line_offsets)
+
+        if offset >= total:
+            return [], total, None
+
+        # 计算实际读取范围
+        end = min(offset + limit, total)
+        frames = []
+
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                for i in range(offset, end):
+                    f.seek(line_offsets[i])
+                    line = f.readline().strip()
+                    if line:
                         try:
                             frames.append(json.loads(line))
                         except json.JSONDecodeError as e:
-                            print(f"[VizServer] 跳过无效行 {filename}:{line_num}: {e}")
-            except Exception as e:
-                return None, f"读取文件失败: {e}"
+                            print(f"[VizServer] 跳过无效行 {filename}:line_{i}: {e}")
+        except Exception as e:
+            return None, total, f"读取文件失败: {e}"
 
-            # 写入缓存
-            self._file_cache[cache_key] = {
-                "frames": frames,
-                "_mtime": current_mtime,
-                "_size": current_size,
-            }
+        return frames, total, None
 
-            print(f"[VizServer] 加载完成: {filename} ({len(frames)} 帧, {current_size / 1024:.1f} KB)")
-            return frames, None
+    def get_file_status(self, filename):
+        """获取文件实时状态（用于 Live 播放模式轮询）。"""
+        filepath, error = self._validate_filename(filename)
+        if error:
+            return None, error
+
+        try:
+            stat = os.stat(filepath)
+        except OSError:
+            return None, f"无法读取文件: {filename}"
+
+        # 构建/更新行索引（增量更新，开销很小）
+        line_offsets = self._build_line_index(filename, filepath)
+        now = time.time()
+
+        return {
+            "file": filename,
+            "total_lines": len(line_offsets),
+            "size_bytes": stat.st_size,
+            "is_growing": (now - stat.st_mtime) < 10,
+            "last_modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
+        }, None
 
     def get_status(self):
         """获取服务状态。"""
@@ -128,8 +210,34 @@ class VizReplayServer:
         return {
             "replay_dir": self.replay_dir,
             "file_count": len(file_list),
-            "cached_files": len(self._file_cache),
+            "cached_files": len(self._index_cache),
+            "cached_maps": len(self._map_cache),
         }
+
+    def load_map(self, map_id):
+        """加载地图 JSON 文件（从 maps/ 目录读取，内存缓存）。"""
+        # 安全检查：防止路径穿越
+        if '..' in map_id or '/' in map_id or '\\' in map_id:
+            return None, "非法地图 ID"
+
+        # 缓存命中
+        if map_id in self._map_cache:
+            return self._map_cache[map_id], None
+
+        # 从磁盘加载
+        map_path = os.path.join(self.maps_dir, f"{map_id}.json")
+        if not os.path.exists(map_path):
+            return None, f"地图文件不存在: {map_id}.json"
+
+        try:
+            with open(map_path, 'r', encoding='utf-8') as f:
+                map_data = json.load(f)
+            # 缓存到内存
+            self._map_cache[map_id] = map_data
+            print(f"[VizServer] 地图已加载并缓存: {map_id}")
+            return map_data, None
+        except Exception as e:
+            return None, f"加载地图失败: {e}"
 
 
 # 全局服务实例
@@ -156,15 +264,62 @@ class VizHTTPHandler(BaseHTTPRequestHandler):
             if not filename:
                 self._json_response({"error": "缺少 file 参数"}, status=400)
                 return
-            frames, error = viz_server.load_frames(filename)
+
+            # 分页参数（默认 offset=0, limit=200）
+            try:
+                offset = int(params.get('offset', ['0'])[0])
+                limit = int(params.get('limit', ['200'])[0])
+            except (ValueError, IndexError):
+                offset, limit = 0, 200
+
+            # 限制单次最大返回量
+            limit = min(limit, 2000)
+
+            frames, total, error = viz_server.load_frames_paged(filename, offset, limit)
             if error:
                 self._json_response({"error": error}, status=404)
             else:
                 self._json_response({
                     "file": filename,
-                    "total_frames": len(frames),
+                    "total_frames": total,
+                    "offset": offset,
+                    "limit": limit,
+                    "count": len(frames),
                     "frames": frames,
                 })
+
+        elif path == '/api/frame_count':
+            filename = params.get('file', [None])[0]
+            if not filename:
+                self._json_response({"error": "缺少 file 参数"}, status=400)
+                return
+            count, error = viz_server.get_frame_count(filename)
+            if error:
+                self._json_response({"error": error}, status=404)
+            else:
+                self._json_response({"file": filename, "total_frames": count})
+
+        elif path == '/api/file_status':
+            filename = params.get('file', [None])[0]
+            if not filename:
+                self._json_response({"error": "缺少 file 参数"}, status=400)
+                return
+            status, error = viz_server.get_file_status(filename)
+            if error:
+                self._json_response({"error": error}, status=404)
+            else:
+                self._json_response(status)
+
+        elif path == '/api/map':
+            map_id = params.get('id', [None])[0]
+            if not map_id:
+                self._json_response({"error": "缺少 id 参数"}, status=400)
+                return
+            map_data, error = viz_server.load_map(map_id)
+            if error:
+                self._json_response({"error": error}, status=404)
+            else:
+                self._json_response(map_data)
 
         elif path == '/api/status':
             self._json_response(viz_server.get_status())

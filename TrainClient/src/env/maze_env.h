@@ -91,6 +91,12 @@ public:
     // 获取墙壁线段列表（用于可视化 JSON 输出）
     const std::vector<WallSegment>& GetWalls() const { return walls_; }
 
+    // 获取当前加载的地图 ID（来自 JSON 的 map_id 字段，默认墙壁时为 "default"）
+    const std::string& GetMapId() const { return map_id_; }
+
+    // 获取当前加载的地图文件路径（默认墙壁时为空）
+    const std::string& GetMapFilePath() const { return loaded_map_path_; }
+
 private:
     std::vector<AgentInfo> agents_;
 
@@ -126,6 +132,8 @@ private:
     // --- 地图文件/目录路径 ---
     std::string map_file_;              // 指定的地图文件路径
     std::string map_dir_;               // 地图目录路径（随机选取）
+    std::string map_id_;                // 当前地图 ID（来自 JSON 的 map_id 字段）
+    std::string loaded_map_path_;       // 实际加载的地图文件完整路径
 
     // 从 JSON 文件加载地图数据（墙壁、起终点、尺寸、grid_size、grid_count 等）
     bool LoadMapFromFile(const std::string& filepath);

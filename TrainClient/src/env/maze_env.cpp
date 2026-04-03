@@ -34,6 +34,8 @@ void MazeEnv::Init(const ClientConfig& config) {
     // 初始化网格障碍物
     blocked_.assign(grid_cols_ * grid_rows_, false);
     walls_.clear();
+    map_id_ = "default";
+    loaded_map_path_.clear();
 
     // ---- 地图加载优先级：map_file > map_dir 随机选取 > 默认墙壁 ----
     bool map_loaded = false;
@@ -42,6 +44,7 @@ void MazeEnv::Init(const ClientConfig& config) {
     if (!map_file_.empty()) {
         if (LoadMapFromFile(map_file_)) {
             LOG_INFO("MazeEnv", "从指定地图文件加载成功: %s", map_file_.c_str());
+            loaded_map_path_ = map_file_;
             map_loaded = true;
         } else {
             LOG_WARN("MazeEnv", "指定地图文件加载失败: %s", map_file_.c_str());
@@ -54,6 +57,7 @@ void MazeEnv::Init(const ClientConfig& config) {
         if (!picked.empty()) {
             if (LoadMapFromFile(picked)) {
                 LOG_INFO("MazeEnv", "从目录随机选取地图加载成功: %s", picked.c_str());
+                loaded_map_path_ = picked;
                 map_loaded = true;
             } else {
                 LOG_WARN("MazeEnv", "随机选取的地图文件加载失败: %s", picked.c_str());
@@ -337,6 +341,20 @@ bool MazeEnv::LoadMapFromFile(const std::string& filepath) {
                 end_x_ = ex;
                 end_y_ = ey;
                 LOG_INFO("MazeEnv", "地图终点: (%.0f, %.0f)", end_x_, end_y_);
+            }
+        }
+    }
+
+    // 解析 map_id（用于可视化回放时独立加载地图文件）
+    size_t mid_pos = content.find("\"map_id\"");
+    if (mid_pos != std::string::npos) {
+        size_t colon = content.find(':', mid_pos);
+        if (colon != std::string::npos) {
+            size_t q1 = content.find('"', colon + 1);
+            size_t q2 = (q1 != std::string::npos) ? content.find('"', q1 + 1) : std::string::npos;
+            if (q1 != std::string::npos && q2 != std::string::npos) {
+                map_id_ = content.substr(q1 + 1, q2 - q1 - 1);
+                LOG_INFO("MazeEnv", "地图 ID: %s", map_id_.c_str());
             }
         }
     }
