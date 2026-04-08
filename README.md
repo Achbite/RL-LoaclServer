@@ -1,3 +1,5 @@
+**🌍 Language / 语言**: [🇨🇳 中文](README.md) | [🇬🇧 English](README.en.md)
+
 # 迷宫强化学习训练框架（RL-LocalServer）
 
 > 本地 PPO 强化学习验证框架，用于在 2D 迷宫环境中训练 Agent 学会寻路通关。
